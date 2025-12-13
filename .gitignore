@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+dist/
+venv/
+__pycache__/
+.pytest_cache/
+
+# Python Windows Junk (The cause of your 26k files)
+Lib/
+Scripts/
+share/
+include/
+*.pyc
+
+# Environment Variables
+.env
+*.env
+
+# System
+.DS_Store
+thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Database Data
+postgres_data/
+minio_data/
+milvus_data/
