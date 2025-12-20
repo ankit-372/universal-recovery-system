@@ -17,6 +17,13 @@ export class User {
   @Column({ default: false })
   isVerified: boolean; // For KYC verification later
 
+  // 🆕 NEW FIELDS FOR RESET
+  @Column({ nullable: true, type: 'varchar' })
+  resetPasswordToken: string | null;
+
+  @Column({ nullable: true, type: 'timestamp' })
+  resetPasswordExpires: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -1,40 +1,56 @@
-import { Controller, Post, UseInterceptors, UploadedFile, Body, Get, Req, UseGuards, InternalServerErrorException, BadRequestException } from '@nestjs/common';
+import { Controller, Post, UseInterceptors, UploadedFile, Body, Get, Req, UseGuards, Delete } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ItemsService } from './items.service';
-import { AuthGuard } from '@nestjs/passport';
-
-import { DebugAuthGuard } from '../auth/debug-auth.guard';
+import { DebugAuthGuard } from '../auth/debug-auth.guard'; // Keeping your verified guard
 
 @Controller('items')
 export class ItemsController {
   constructor(private readonly itemsService: ItemsService) { }
 
   @Post()
-  @UseGuards(DebugAuthGuard)
-  @UseInterceptors(FileInterceptor('file')) // This expects a field named 'file'
+  @UseGuards(DebugAuthGuard) // 🔒 Protects this route
+  @UseInterceptors(FileInterceptor('file'))
   async create(
     @UploadedFile() file: Express.Multer.File,
     @Body('description') description: string,
-    @Req() req,
+    @Body('type') type: string, // 'lost' or 'found'
+    @Req() req: any, // Access the logged-in user
   ) {
-    // 1. Validation Check (Prevents the crash)
-    if (!file) {
-      throw new BadRequestException('File is missing! Please upload an image with key "file".');
-    }
-
-    // 2. User Check
-    if (!req.user || !req.user.id) {
-      throw new InternalServerErrorException('User ID not found in Request');
-    }
-
+    // ✅ Extract Real User ID from the Token (from DebugAuthGuard/JwtStrategy)
+    // JwtStrategy returns { id, email, name }
     const userId = req.user.id;
-    console.log("✅ Processing Upload for User:", userId);
+    console.log(`📝 Uploading Item for User ID: ${userId}`);
 
-    return this.itemsService.create(file, description, userId);
+    // Convert string to boolean
+    const isLost = type === 'lost';
+    console.log(`📝 Item Type: '${type}', isLost: ${isLost}`);
+
+    return this.itemsService.create(file, description, userId, isLost);
+  }
+
+  @Post('search')
+  async search(@Body('text') text: string) {
+    return this.itemsService.search(text);
   }
 
   @Get()
   findAll() {
     return this.itemsService.findAll();
+  }
+
+  @UseGuards(DebugAuthGuard) // Protect this route
+  @Get('mine')
+  async getMyItems(@Req() req) {
+    // req.user is populated by the Guard (from the Token via JwtStrategy)
+    // JwtStrategy returns { id, email, name }
+    const userId = req.user.id;
+    return this.itemsService.findByUser(userId);
+  }
+
+
+  @Delete('nuke')
+  async nukeDatabase() {
+    console.warn("☢️ NUKING DATABASE: Deleting all items...");
+    return this.itemsService.nuke();
   }
 }

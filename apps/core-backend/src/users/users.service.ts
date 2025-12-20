@@ -55,4 +55,23 @@ export class UsersService {
   async remove(id: string) {
     return this.usersRepository.delete(id);
   }
+
+  async setResetToken(userId: string, token: string, expires: Date) {
+    return this.usersRepository.update(userId, {
+      resetPasswordToken: token,
+      resetPasswordExpires: expires
+    });
+  }
+
+  async findByResetToken(token: string) {
+    return this.usersRepository.findOne({ where: { resetPasswordToken: token } });
+  }
+
+  async updatePasswordAndClearToken(userId: string, passwordHash: string) {
+    return this.usersRepository.update(userId, {
+      passwordHash,
+      resetPasswordToken: null,
+      resetPasswordExpires: null
+    });
+  }
 }

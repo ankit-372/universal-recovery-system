@@ -8,25 +8,26 @@ import { UsersModule } from '../users/users.module'; // Import UsersModule
 import { UsersService } from '../users/users.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from '../users/entities/user.entity';
+import { EmailService } from './email.service';
 
 import { JwtStrategy } from './jwt.strategy';
 
 @Module({
   imports: [
-    UsersModule, // We need to find users to log them in
+    UsersModule, // We use the exported UsersService from here
     PassportModule,
-    TypeOrmModule.forFeature([User]), // Allow injecting User repo
+    // TypeOrmModule.forFeature([User]), // ❌ Removed: UsersService handles DB access
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'DEV_SECRET_KEY', // Store this in .env!
-        signOptions: { expiresIn: '1h' }, // Token dies in 1 hour
+        secret: configService.get<string>('JWT_SECRET') || 'DEV_SECRET_KEY',
+        signOptions: { expiresIn: '1h' },
       }),
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, UsersService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, EmailService], // ❌ Removed UsersService from here (it's imported)
   exports: [AuthService, JwtStrategy, PassportModule]
 })
 export class AuthModule { }

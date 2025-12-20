@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ItemsModule } from './items/items.module';
+import { ChatModule } from './chat/chat.module'; // <--- 1. Import ChatModule
 
 @Module({
   imports: [
@@ -31,10 +32,9 @@ import { ItemsModule } from './items/items.module';
     }),
 
     UsersModule,
-
     AuthModule,
-
     ItemsModule,
+    ChatModule, // <--- 2. Add to Imports array
   ],
   controllers: [AppController],
   providers: [AppService],
