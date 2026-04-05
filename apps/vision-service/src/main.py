@@ -255,6 +255,44 @@ async def search(
         print(f"Search Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/debug/collection")
+async def debug_collection():
+    """Debug endpoint to check what's in Milvus"""
+    try:
+        collection = Collection(COLLECTION_NAME)
+        count = collection.num_entities
+        
+        # Query some sample entities
+        samples = []
+        if count > 0:
+            results = collection.query(
+                expr="",  # No filter = get all
+                output_fields=["external_id", "description", "is_lost"],
+                limit=10
+            )
+            samples = results
+        
+        return {
+            "collection_name": COLLECTION_NAME,
+            "total_entities": count,
+            "samples": samples
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.delete("/reset")
+async def reset_collection():
+    """Reset the Milvus collection"""
+    try:
+        if utility.has_collection(COLLECTION_NAME):
+            collection = Collection(COLLECTION_NAME)
+            collection.drop()
+            print(f"✅ Collection '{COLLECTION_NAME}' dropped.")
+        init_milvus()
+        return {"status": "Collection reset successfully"}
+    except Exception as e:
+        return {"error": str(e)}
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 7860))
     uvicorn.run(app, host="0.0.0.0", port=port)
