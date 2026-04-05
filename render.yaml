@@ -28,6 +28,10 @@ services:
     rootDir: apps/web-client
     buildCommand: npm install --include=dev && npm run build
     staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
       - key: VITE_API_URL
         sync: false # You will manually paste the Backend URL here (e.g. https://core-backend-xxxx.onrender.com)
