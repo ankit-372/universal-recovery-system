@@ -20,8 +20,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (!user) return;
 
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+        const baseURL = apiUrl.startsWith('http') ? apiUrl : `https://${apiUrl}`;
+
         // Connect with userId so server knows who we are
-        const newSocket = io('http://localhost:3000', {
+        const newSocket = io(baseURL, {
             query: { userId: user.id },
         });
 

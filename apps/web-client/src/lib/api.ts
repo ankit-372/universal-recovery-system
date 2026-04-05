@@ -2,8 +2,11 @@ import axios from 'axios';
 // ... existing exports
 export const getMyItems = () => API.get('/items/mine');
 
+const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const baseURL = apiUrl.startsWith('http') ? apiUrl : `https://${apiUrl}`;
+
 const API = axios.create({
-  baseURL: 'http://localhost:3000',
+  baseURL: baseURL,
   withCredentials: true, // 🍪 CRITICAL: Allows browser to send/receive HttpOnly cookies automatically
 });
 

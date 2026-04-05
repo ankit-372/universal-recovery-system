@@ -11,8 +11,9 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // 🟦 5. Enable CORS with Credentials
+  // 🟦 5. Enable CORS with Credentials
   app.enableCors({
-    origin: 'http://localhost:5173', // Must match your Frontend URL exactly
+    origin: ['http://localhost:5173', /^https:\/\/.*\.onrender\.com$/], // Dynamic Cloud URLs
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true, // ⚠️ CRITICAL: Allows cookies to be sent back and forth
   });
