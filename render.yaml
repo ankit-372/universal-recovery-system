@@ -30,10 +30,7 @@ services:
     staticPublishPath: ./dist
     envVars:
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: core-backend
-          property: url
+        sync: false # You will manually paste the Backend URL here (e.g. https://core-backend-xxxx.onrender.com)
 
 databases:
   - name: urs-postgres
