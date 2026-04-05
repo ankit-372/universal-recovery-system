@@ -21,11 +21,12 @@ import { ChatModule } from './chat/chat.module'; // <--- 1. Import ChatModule
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
-        host: config.get<string>('DB_HOST'),
-        port: config.get<number>('DB_PORT'),
-        username: config.get<string>('DB_USERNAME'),
-        password: config.get<string>('DB_PASSWORD'),
-        database: config.get<string>('DB_NAME'),
+        url: config.get<string>('DATABASE_URL'), // Full connection string if on Render
+        host: config.get<string>('DB_HOST') || 'localhost', // Fallback for local Docker
+        port: config.get<number>('DB_PORT') || 5432,
+        username: config.get<string>('DB_USERNAME') || 'postgres',
+        password: config.get<string>('DB_PASSWORD') || 'postgres',
+        database: config.get<string>('DB_NAME') || 'postgres',
         autoLoadEntities: true,
         synchronize: true, // ⚠️ Only for dev! (Auto-creates tables)
       }),
