@@ -5,7 +5,7 @@ services:
     env: node
     plan: free
     rootDir: apps/core-backend
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npm run start:prod
     envVars:
       - key: DATABASE_URL
@@ -26,7 +26,7 @@ services:
     name: web-client
     env: static
     rootDir: apps/web-client
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     staticPublishPath: ./dist
     envVars:
       - key: VITE_API_URL
