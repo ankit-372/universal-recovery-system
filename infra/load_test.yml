@@ -1,0 +1,27 @@
+config:
+  target: "http://localhost:8000"
+  phases:
+    - duration: 20         # 20 seconds
+      arrivalRate: 2       # 2 new virtual users per second
+      name: "Warm Up phase" 
+    - duration: 40         # 40 seconds
+      arrivalRate: 5       # 5 users per second
+      name: "Rush Hour Load"
+    - duration: 20         # 20 seconds
+      arrivalRate: 15      # 15 users per second
+      name: "Max Capacity Test (Failure Expected)"
+  
+  plugins:
+    expect: {} # To verify standard 200 OK responses
+
+scenarios:
+  - name: "Vision Service - Semantic Text Search"
+    weight: 1
+    flow:
+      - post:
+          url: "/search"
+          formData:
+            text: "a black backpack"
+            filter_is_lost: "true"
+          expect:
+            - statusCode: 200

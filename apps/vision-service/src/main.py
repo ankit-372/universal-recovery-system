@@ -7,6 +7,7 @@ from PIL import Image
 import io
 import torch
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
+from fastapi.concurrency import run_in_threadpool
 import uvicorn
 
 
@@ -99,7 +100,7 @@ async def analyze_image(
 
         # B. YOLO Object Detection (Detect what object is in the image)
         # Lower confidence to 0.25 so it catches more items (like your backpack example)
-        yolo_results = yolo_model(image, conf=0.25)
+        yolo_results = await run_in_threadpool(yolo_model, image, conf=0.25)
         detected_objects = []
         for result in yolo_results:
             for box in result.boxes:
@@ -115,10 +116,14 @@ async def analyze_image(
 
         # C. Generate Vector (CLIP)
         inputs = clip_processor(images=image, return_tensors="pt").to(device)
-        with torch.no_grad():
-            outputs = clip_model.get_image_features(**inputs)
-            # 🆕 Normalize vector for Cosine Similarity
-            outputs = outputs / outputs.norm(p=2, dim=-1, keepdim=True)
+        
+        def _run_clip():
+            with torch.no_grad():
+                out = clip_model.get_image_features(**inputs)
+                # 🆕 Normalize vector for Cosine Similarity
+                return out / out.norm(p=2, dim=-1, keepdim=True)
+                
+        outputs = await run_in_threadpool(_run_clip)
         
         # Flatten vector to list
         embedding = outputs.squeeze().tolist()
@@ -129,13 +134,16 @@ async def analyze_image(
         # D. Save to Milvus
         collection = Collection(COLLECTION_NAME)
         # Data format must match schema order: [[external_id], [vector], [description], [is_lost]]
-        collection.insert([
-            [item_id],          # external_id
-            [embedding],        # vector
-            [full_description], # description
-            [is_lost_bool]      # is_lost
-        ])
-        collection.flush() # Ensure it is searchable immediately
+        def _insert_milvus():
+            collection.insert([
+                [item_id],          # external_id
+                [embedding],        # vector
+                [full_description], # description
+                [is_lost_bool]      # is_lost
+            ])
+            collection.flush() # Ensure it is searchable immediately
+            
+        await run_in_threadpool(_insert_milvus)
 
         return {
             "status": "stored", 
@@ -167,18 +175,26 @@ async def search(
             image_data = await file.read()
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
             inputs = clip_processor(images=image, return_tensors="pt").to(device)
-            with torch.no_grad():
-                outputs = clip_model.get_image_features(**inputs)
-                outputs = outputs / outputs.norm(p=2, dim=-1, keepdim=True) # 🆕 Normalize
+            
+            def _run_clip_image():
+                with torch.no_grad():
+                    out = clip_model.get_image_features(**inputs)
+                    return out / out.norm(p=2, dim=-1, keepdim=True) # 🆕 Normalize
+            
+            outputs = await run_in_threadpool(_run_clip_image)
             query_vector = outputs.squeeze().tolist()
         
         elif text:
             # Text Search Logic
             print(f"🔍 Searching by Text: '{text}'")
             inputs = clip_processor(text=[text], return_tensors="pt", padding=True).to(device)
-            with torch.no_grad():
-                outputs = clip_model.get_text_features(**inputs)
-                outputs = outputs / outputs.norm(p=2, dim=-1, keepdim=True) # 🆕 Normalize
+            
+            def _run_clip_text():
+                with torch.no_grad():
+                    out = clip_model.get_text_features(**inputs)
+                    return out / out.norm(p=2, dim=-1, keepdim=True) # 🆕 Normalize
+                    
+            outputs = await run_in_threadpool(_run_clip_text)
             query_vector = outputs.squeeze().tolist()
         
         else:
@@ -196,14 +212,17 @@ async def search(
             expr = f"is_lost == {val}"
             print(f"DEBUG: Filtering with expr: {expr}")
 
-        results = collection.search(
-            data=[query_vector], 
-            anns_field="vector", 
-            param={"metric_type": "IP", "params": {"nprobe": 10}}, 
-            limit=5, 
-            expr=expr, # 🆕 Apply Filter
-            output_fields=["external_id", "description", "is_lost"] # Return the ID so you can look it up in your DB
-        )
+        def _perform_search():
+            return collection.search(
+                data=[query_vector], 
+                anns_field="vector", 
+                param={"metric_type": "IP", "params": {"nprobe": 10}}, 
+                limit=5, 
+                expr=expr, # 🆕 Apply Filter
+                output_fields=["external_id", "description", "is_lost"] # Return the ID so you can look it up in your DB
+            )
+            
+        results = await run_in_threadpool(_perform_search)
 
         # 3. Format Results
         matches = []
