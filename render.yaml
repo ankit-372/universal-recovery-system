@@ -33,7 +33,7 @@ services:
         fromService:
           type: web
           name: core-backend
-          property: host
+          property: url
 
 databases:
   - name: urs-postgres
