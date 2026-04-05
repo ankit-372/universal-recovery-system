@@ -129,14 +129,38 @@ async def analyze_image(
         
         def _run_clip():
             with torch.no_grad():
-                out = clip_model.get_image_features(**inputs)
-                # 🆕 Normalize vector for Cosine Similarity
+                # Explicitly pass pixel_values to avoid HF routing bugs
+                out = clip_model.get_image_features(pixel_values=inputs["pixel_values"])
+                
+                # If it still returns a BaseModelOutput (some versions do), extract the tensor
+                if not isinstance(out, torch.Tensor):
+                    # Usually image_embeds is the 512 projection
+                    if hasattr(out, 'image_embeds'):
+                        out = out.image_embeds
+                    # Otherwise, pooler_output (index 1) is the pooled 768/512 feature
+                    elif hasattr(out, 'pooler_output'):
+                        out = out.pooler_output
+                    else:
+                        out = out[0]
+
+                # Project if it somehow bypassed the projection layer (768 -> 512)
+                if out.shape[-1] == 768 and hasattr(clip_model, 'visual_projection'):
+                    out = clip_model.visual_projection(out)
+                
+                # If sequence dimension exists [Batch, Seq, Dim], take CLS token
+                if out.dim() == 3:
+                    out = out[:, 0, :]
+                
+                # Normalize vector for Cosine Similarity
                 return out / out.norm(p=2, dim=-1, keepdim=True)
                 
         outputs = await run_in_threadpool(_run_clip)
         
-        # Flatten vector to list
+        # Flatten explicitly to a single list of floats
         embedding = outputs.squeeze().tolist()
+        # Fallback to prevent nested lists in case squeeze leaves one
+        if len(embedding) > 0 and isinstance(embedding[0], list):
+            embedding = embedding[0]
 
         # Convert param to bool
         is_lost_bool = is_lost.lower() == 'true'
@@ -188,11 +212,24 @@ async def search(
             
             def _run_clip_image():
                 with torch.no_grad():
-                    out = clip_model.get_image_features(**inputs)
-                    return out / out.norm(p=2, dim=-1, keepdim=True) # 🆕 Normalize
+                    out = clip_model.get_image_features(pixel_values=inputs["pixel_values"])
+                    if not isinstance(out, torch.Tensor):
+                        if hasattr(out, 'image_embeds'):
+                            out = out.image_embeds
+                        elif hasattr(out, 'pooler_output'):
+                            out = out.pooler_output
+                        else:
+                            out = out[0]
+                    if out.shape[-1] == 768 and hasattr(clip_model, 'visual_projection'):
+                        out = clip_model.visual_projection(out)
+                    if out.dim() == 3:
+                        out = out[:, 0, :]
+                    return out / out.norm(p=2, dim=-1, keepdim=True)
             
             outputs = await run_in_threadpool(_run_clip_image)
             query_vector = outputs.squeeze().tolist()
+            if len(query_vector) > 0 and isinstance(query_vector[0], list):
+                query_vector = query_vector[0]
         
         elif text:
             # Text Search Logic
@@ -201,11 +238,24 @@ async def search(
             
             def _run_clip_text():
                 with torch.no_grad():
-                    out = clip_model.get_text_features(**inputs)
-                    return out / out.norm(p=2, dim=-1, keepdim=True) # 🆕 Normalize
+                    out = clip_model.get_text_features(input_ids=inputs["input_ids"], attention_mask=inputs.get("attention_mask"))
+                    if not isinstance(out, torch.Tensor):
+                        if hasattr(out, 'text_embeds'):
+                            out = out.text_embeds
+                        elif hasattr(out, 'pooler_output'):
+                            out = out.pooler_output
+                        else:
+                            out = out[0]
+                    if out.shape[-1] == 768 and hasattr(clip_model, 'text_projection'):
+                        out = clip_model.text_projection(out)
+                    if out.dim() == 3:
+                        out = out[:, 0, :]
+                    return out / out.norm(p=2, dim=-1, keepdim=True)
                     
             outputs = await run_in_threadpool(_run_clip_text)
             query_vector = outputs.squeeze().tolist()
+            if len(query_vector) > 0 and isinstance(query_vector[0], list):
+                query_vector = query_vector[0]
         
         else:
             raise HTTPException(400, "Provide text or upload an image to search.")
