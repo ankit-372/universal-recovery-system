@@ -3,6 +3,7 @@ services:
   - type: web
     name: core-backend
     env: node
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm run start:prod
     envVars:
@@ -36,3 +37,4 @@ databases:
   - name: urs-postgres
     databaseName: recovery_db
     user: dbadmin
+    plan: free
