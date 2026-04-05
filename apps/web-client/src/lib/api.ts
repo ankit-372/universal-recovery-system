@@ -3,7 +3,12 @@ import axios from 'axios';
 export const getMyItems = () => API.get('/items/mine');
 
 const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-const baseURL = apiUrl.startsWith('http') ? apiUrl : `https://${apiUrl}`;
+export const baseURL = apiUrl.startsWith('http') ? apiUrl : `https://${apiUrl}`;
+
+export const getProxyImageUrl = (url: string) => {
+  if (!url) return '';
+  return `${baseURL}/items/image/proxy?url=${encodeURIComponent(url)}`;
+};
 
 const API = axios.create({
   baseURL: baseURL,

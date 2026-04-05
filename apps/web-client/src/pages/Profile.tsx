@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getMyItems } from '../lib/api';
+import { getMyItems, getProxyImageUrl } from '../lib/api';
 import { Calendar, Package, Search, LogOut } from 'lucide-react';
 
 export function Profile() {
@@ -69,7 +69,7 @@ export function Profile() {
                     {items.map((item) => (
                         <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 hover:shadow-lg transition group">
                             <div className="relative h-48 mb-4 overflow-hidden rounded-xl">
-                                <img src={item.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
+                                <img src={getProxyImageUrl(item.imageUrl)} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" crossOrigin="anonymous" />
 
                                 {/* Badge: Lost vs Found */}
                                 <div className={`absolute top-2 right-2 px-3 py-1 rounded-full text-[10px] font-bold shadow-sm uppercase ${item.isLost ? 'bg-red-500 text-white' : 'bg-green-500 text-white'

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Upload, Search, MapPin, MessageSquare } from 'lucide-react';
-import { uploadItem } from '../lib/api';
+import { uploadItem, getProxyImageUrl } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { ChatWindow } from '../components/ChatWindow';
 
@@ -106,7 +106,7 @@ export function ReportLost() {
                         {matches.map(item => (
                             <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 hover:shadow-xl hover:-translate-y-1 transition duration-300">
                                 <div className="relative h-48 mb-4 overflow-hidden rounded-xl">
-                                    <img src={item.imageUrl} className="w-full h-full object-cover" />
+                                    <img src={getProxyImageUrl(item.imageUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" />
                                     <div className="absolute top-2 right-2 bg-green-500/90 backdrop-blur-sm text-white text-[10px] px-2 py-1 rounded-full font-bold shadow-sm">
                                         {Math.round((item.score || 0) * 100)}% MATCH
                                     </div>

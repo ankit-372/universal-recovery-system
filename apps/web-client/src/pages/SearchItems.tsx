@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Search, MapPin, AlertCircle } from 'lucide-react';
-import { searchItems } from '../lib/api';
+import { Search, MapPin, AlertCircle, Image as ImageIcon } from 'lucide-react';
+import { searchItems, getProxyImageUrl } from '../lib/api';
 
 export function SearchItems() {
   const [query, setQuery] = useState('');
@@ -52,8 +52,14 @@ export function SearchItems() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {results.map((item) => (
           <div key={item.id} className="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition border border-gray-100">
-            <div className="relative h-48">
-              <img src={item.imageUrl} alt="Item" className="w-full h-full object-cover" />
+            <div className="relative h-48 sm:h-56">
+              {item.imageUrl ? (
+                <img src={getProxyImageUrl(item.imageUrl)} alt="Item" className="w-full h-full object-cover" crossOrigin="anonymous" />
+              ) : (
+                <div className="w-full h-full bg-slate-100 flex items-center justify-center text-slate-400">
+                  <ImageIcon className="w-8 h-8 opacity-50" />
+                </div>
+              )}
               <div className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-md backdrop-blur-sm">
                  {/* Visualizing Vector Distance as "Match %" (inverted logic for display) */}
                  Match: {Math.max(0, Math.round((1 - item.score) * 100))}%

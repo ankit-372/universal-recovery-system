@@ -1,7 +1,9 @@
-import { Controller, Post, UseInterceptors, UploadedFile, Body, Get, Req, UseGuards, Delete } from '@nestjs/common';
+import { Controller, Post, UseInterceptors, UploadedFile, Body, Get, Req, UseGuards, Delete, Query, Res } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ItemsService } from './items.service';
 import { DebugAuthGuard } from '../auth/debug-auth.guard'; // Keeping your verified guard
+import type { Response } from 'express';
+import * as https from 'https';
 
 @Controller('items')
 export class ItemsController {
@@ -31,6 +33,26 @@ export class ItemsController {
   @Post('search')
   async search(@Body('text') text: string) {
     return this.itemsService.search(text);
+  }
+
+  // 🛡️ PROXY ROUTE to bypass Brave/ISP blocks on Cloudinary
+  @Get('image/proxy')
+  proxyImage(@Query('url') url: string, @Res() res: Response) {
+    if (!url) return res.status(400).send('No image URL provided');
+    
+    // Ensure URL is HTTPS to prevent mixed-content or SSRF on local
+    if (!url.startsWith('https://res.cloudinary.com')) {
+      return res.status(403).send('Proxy only allowed for Cloudinary');
+    }
+
+    https.get(url, (imageRes) => {
+      res.setHeader('Content-Type', imageRes.headers['content-type'] || 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache it fully!
+      imageRes.pipe(res);
+    }).on('error', (e) => {
+      console.error("Proxy error:", e);
+      res.status(500).send('Image proxy failed');
+    });
   }
 
   @Get()
