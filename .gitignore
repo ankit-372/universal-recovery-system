@@ -24,6 +24,13 @@ thumbs.db
 .vscode/
 .idea/
 
+# Large media / PDFs
+*.pdf
+*.mp4
+*.mp3
+*.wav
+*.mkv
+
 # Database Data
 postgres_data/
 minio_data/
