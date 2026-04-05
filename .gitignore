@@ -6,9 +6,9 @@ __pycache__/
 .pytest_cache/
 
 # Python Windows Junk (The cause of your 26k files)
-Lib/
-Scripts/
-share/
+/apps/vision-service/Lib/
+/apps/vision-service/Scripts/
+/apps/vision-service/share/
 include/
 *.pyc
 
