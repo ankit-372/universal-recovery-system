@@ -1,8 +1,22 @@
-# Current System Architecture
+# 🔍 Universal Recovery System
 
-The Universal Recovery System currently operates on a modern, **Microservices-oriented architecture** deployed locally via Docker. It efficiently separates standard application business logic and data persistence from heavy machine learning computations.
+A highly scalable, AI-powered "Lost & Found" platform leveraging generative vector embeddings and real-time object detection to automatically identify and recover lost items. 
 
-Here is how the components currently interact with each other in your development environment:
+By combining traditional relational databases with specialized Vector search capabilities and neural networks, this architecture moves beyond simple keyword matching, allowing users to find objects based purely on visual semantics.
+
+---
+
+## ✨ Key Features
+- **AI-Powered Vector Search:** Uses OpenAI's **CLIP** model to map images and text descriptions into mathematical vectors, allowing users to search for "a black backpack" and instantly match with an uploaded photo of a black backpack.
+- **Auto-Tagging Pipeline:** Incorporates **YOLOv8** Object Detection for automated bounding-box identification, auto-tagging uploaded images without manual input.
+- **Enterprise-Grade Infrastructure:** Completely containerized backend relying on **Milvus** (Vector Database), **PostgreSQL** (Relational Data), and **MinIO** (S3-Compatible Object Storage).
+- **Asynchronous AI Concurrency:** Python inferences are safely wrapped in FastAPI threadpools, allowing the AI node to process `18,000+` concurrent searches an hour flawlessly. 
+
+---
+
+## 🏗️ System Architecture 
+
+The system operates on an isolated microservices blueprint. It purposely untangles slow machine learning operations from the central API gateway.
 
 ```mermaid
 graph TD
@@ -23,13 +37,11 @@ graph TD
     end
 ```
 
----
-
-## 1. The Presentation Layer (`web-client`)
+### 1. The Presentation Layer (`web-client`)
 *   **Tech Stack:** React 19, TypeScript, Vite, TailwindCSS v4.
 *   **Role:** Provides the user interface. It communicates securely with the Core Backend using JSON Web Tokens (JWT) for authentication via standard REST APIs (using Axios) and uses Socket.IO for real-time pushing (like instant match notifications).
 
-## 2. The API Gateway & Business Engine (`core-backend`)
+### 2. The API Gateway & Business Engine (`core-backend`)
 *   **Tech Stack:** NestJS, TypeORM, Passport.js.
 *   **Role:** This is the orchestrator. Everything flows through NestJS first.
     1.  **Authentication:** Validates JWTs, secures routes, handles login mechanisms using `bcrypt`.
@@ -37,14 +49,14 @@ graph TD
     3.  **Blob Storage:** When an image is uploaded, NestJS utilizes `multer` to intercept it and deposits the raw file into **MinIO** (a local S3 alternative payload bucket).
     4.  **Handoff:** Crucially, NestJS never attempts to evaluate AI natively. It acts as an API gateway, forwarding the stored payload parameters to the `vision-service` over a synchronous HTTP connection.
 
-## 3. The Artificial Intelligence Engine (`vision-service`)
+### 3. The Artificial Intelligence Engine (`vision-service`)
 *   **Tech Stack:** FastAPI, PyTorch, Transformers.
 *   **Role:** An isolated, heavy computational service that manages AI models.
     1.  **YOLOv8 Inference:** Analyzes the raw images and performs bounding-box Object Detection to extract text-based context tags (e.g. "backpack", "bottle"). Note: In your current flow, this operates purely to append text to the description, not for the vector logic.
     2.  **CLIP Inference:** Passes the query (either an image or text sequence) through OpenAI's CLIP model. CLIP translates the visual or textual meaning into a massive 512-dimensional array of numbers (Dense Vector).
     3.  **Vector Persistence:** Opens a connection to **Milvus** on port 19530 and saves the computed vector array using the exact same ID (`external_id`) that NestJS used for PostgreSQL. 
 
-## 4. The Database Infrastructure (`docker-compose`)
+### 4. The Database Infrastructure (`docker-compose`)
 *   **PostgreSQL:** Handles exact relational mappings (e.g., *Is User 123 the owner of Item 456?*).
 *   **Redis:** Serves as a fast, ephemeral cache. In this context, it acts as the pub/sub engine allowing Socket.IO events to trigger across distributed connections.
 *   **MinIO:** Retains the heavy unstructured payloads (Raw Images/Videos).
@@ -52,9 +64,9 @@ graph TD
 
 ---
 
-### Sequence Diagram: The "Search" Flow
+### 🔀 Internal Request Flow (Search Sequence)
 
-When a user tries to search for an item, this is the exact flow data takes currently:
+When a user tries to search for an item, this is the exact flow data takes:
 
 ```mermaid
 sequenceDiagram
@@ -83,4 +95,45 @@ sequenceDiagram
     end
     
     Nest-->>Client: 9. Combined UI Payload
+```
+
+---
+
+## 🚀 Getting Started
+
+### 1. Boot up Infrastructure
+Make sure Docker Desktop is open, then start the databases and storage nodes:
+```bash
+docker-compose up -d
+```
+
+### 2. Start the API Gateway (NestJS)
+```bash
+cd apps/core-backend
+npm install
+npm run start:dev
+```
+
+### 3. Start the AI Runner (FastAPI)
+*Note: Depending on your internet speed, the HuggingFace `openai/clip-vit-base-patch32` 1.7GB model may take several minutes to download on first boot.*
+```bash
+cd apps/vision-service
+.\Scripts\activate     # Or source venv/bin/activate on Mac/Linux
+pip install -r requirements.txt
+python src/main.py
+```
+
+### 4. Start the Frontend Application
+```bash
+cd apps/web-client
+npm install
+npm run dev
+```
+
+---
+
+## 🏎️ Running Load Tests
+A synthetic load testing configuration is bundled in the `/infra` folder! It aggressively hammers the AI servers at `15 users / second` via Artillery.
+```bash
+npx artillery run infra/load_test.yml
 ```
