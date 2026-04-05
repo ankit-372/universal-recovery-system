@@ -218,7 +218,8 @@ async def search(
         # 🆕 Build Filter Expression
         expr = None
         if filter_is_lost is not None:
-            val = filter_is_lost.lower() == 'true'
+            # Milvus requires lowercase "true"/"false" in expressions, not Python's "True"/"False"
+            val = "true" if filter_is_lost.lower() == 'true' else "false"
             expr = f"is_lost == {val}"
             print(f"DEBUG: Filtering with expr: {expr}")
 

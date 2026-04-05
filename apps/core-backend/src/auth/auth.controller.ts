@@ -40,7 +40,12 @@ export class AuthController {
   @Post('logout')
   async logout(@Res({ passthrough: true }) res: Response) {
     // Clear the cookie to log the user out
-    res.clearCookie('jwt');
+    // MUST pass same options used when setting the cookie, otherwise browser ignores it
+    res.clearCookie('jwt', {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+    });
     return { message: 'Logged out successfully' };
   }
 
