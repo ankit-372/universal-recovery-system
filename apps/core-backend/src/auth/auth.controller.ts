@@ -12,9 +12,9 @@ export class AuthController {
   ) { }
 
   @Post('login')
-  async login(@Body() req, @Res({ passthrough: true }) res: Response) {
+  async login(@Body() body: any, @Res({ passthrough: true }) res: Response) {
     // 1. Validate User (Check email/password)
-    const user = await this.authService.validateUser(req.email, req.password);
+    const user = await this.authService.validateUser(body.email, body.password);
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -25,8 +25,8 @@ export class AuthController {
     // 3. Set HttpOnly Cookie
     res.cookie('jwt', access_token, {
       httpOnly: true,  // 🔒 JavaScript cannot read this (Prevents XSS)
-      secure: false,   // ⚠️ Set to 'true' in Production (Requires HTTPS)
-      sameSite: 'lax', // 🛡️ Helps prevent CSRF
+      secure: true,    // MUST be true for cross-site cookies in production
+      sameSite: 'none', // MUST be 'none' for independent frontend/backend domains
       maxAge: 3600 * 1000, // 1 hour expiration
     });
 
