@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Item } from './entities/item.entity';
-import { minioClient } from '../minio-client';
+import { uploadToCloudinary } from '../cloudinary-client';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
@@ -17,11 +17,9 @@ export class ItemsService {
 
   async create(file: Express.Multer.File, description: string, userId: string, isLost: boolean) {
     const bucketName = 'lost-items';
-    const fileName = `${Date.now()}-${file.originalname}`;
 
-    // 1. Upload to MinIO
-    await minioClient.putObject(bucketName, fileName, file.buffer);
-    const imageUrl = `http://localhost:9000/${bucketName}/${fileName}`;
+    // 1. Upload to Cloudinary instead of MinIO
+    const imageUrl = await uploadToCloudinary(file.buffer, bucketName);
 
     // 2. Save Initial Record
     const newItem = this.itemsRepository.create({
@@ -44,7 +42,7 @@ export class ItemsService {
       formData.append('is_lost', String(isLost));
 
       const response = await firstValueFrom(
-        this.httpService.post('http://localhost:8000/analyze', formData, {
+        this.httpService.post(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/analyze`, formData, {
           headers: { ...formData.getHeaders() },
         }),
       );
@@ -106,7 +104,7 @@ export class ItemsService {
         }
 
         response = await firstValueFrom(
-          this.httpService.post('http://localhost:8000/search', formData, {
+          this.httpService.post(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/search`, formData, {
             headers: { ...formData.getHeaders() }
           })
         );
@@ -118,7 +116,7 @@ export class ItemsService {
         if (filterIsLost !== undefined) params.append('filter_is_lost', String(filterIsLost));
 
         response = await firstValueFrom(
-          this.httpService.post('http://localhost:8000/search', params, {
+          this.httpService.post(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/search`, params, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
           })
         );
@@ -166,7 +164,7 @@ export class ItemsService {
 
     // 2. Clear Milvus
     try {
-      await firstValueFrom(this.httpService.delete('http://localhost:8000/reset'));
+      await firstValueFrom(this.httpService.delete(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/reset`));
       console.log("✅ Milvus reset successfully");
     } catch (e) {
       console.error("❌ Failed to reset Milvus:", e.message);

@@ -9,6 +9,7 @@ import torch
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
 from fastapi.concurrency import run_in_threadpool
 import uvicorn
+import os
 
 
 app = FastAPI(title="Vision Service")
@@ -42,7 +43,16 @@ DIMENSION = 512
 def init_milvus():
     print("⏳ Connecting to Milvus...")
     try:
-        connections.connect("default", host="localhost", port="19530")
+        milvus_uri = os.getenv("MILVUS_URI", "localhost")
+        milvus_port = os.getenv("MILVUS_PORT", "19530")
+        milvus_token = os.getenv("MILVUS_TOKEN", "")
+
+        if milvus_token:
+            print(f"Connecting to Zilliz Cloud at {milvus_uri}...")
+            connections.connect("default", uri=milvus_uri, token=milvus_token)
+        else:
+            print("Connecting to local Milvus...")
+            connections.connect("default", host=milvus_uri, port=milvus_port)
         
         if not utility.has_collection(COLLECTION_NAME):
             print(f"⚠️ Collection '{COLLECTION_NAME}' missing. Creating...")
@@ -245,4 +255,5 @@ async def search(
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 7860))
+    uvicorn.run(app, host="0.0.0.0", port=port)
