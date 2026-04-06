@@ -82,7 +82,7 @@ sequenceDiagram
     Client->>Nest: 1. Upload Query Image File to Match
     Nest->>Fast: 2. POST /search (image file stream)
     
-    rect rgb(200, 220, 240)
+    rect rgb(0, 0, 240)
         Note right of Fast: AI Inference Phase
         Fast->>Fast: 3. CLIP calculates 512D Tensor -> Flattens
     end
@@ -91,7 +91,7 @@ sequenceDiagram
     Zil-->>Fast: 5. Return top 5 matches (IDs + Score)
     Fast-->>Nest: 6. Returns ID & Score JSON
     
-    rect rgb(200, 240, 200)
+    rect rgb(20, 24, 200)
         Note left of PG: Relational Reconstruction
         Nest->>PG: 7. SELECT * FROM Items WHERE id IN (...)
         PG-->>Nest: 8. Rows containing associated Cloudinary URLs
