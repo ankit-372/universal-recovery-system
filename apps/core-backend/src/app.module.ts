@@ -19,17 +19,30 @@ import { ChatModule } from './chat/chat.module'; // <--- 1. Import ChatModule
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        url: config.get<string>('DATABASE_URL'), // Full connection string if on Render
-        host: config.get<string>('DB_HOST') || 'localhost', // Fallback for local Docker
-        port: config.get<number>('DB_PORT') || 5432,
-        username: config.get<string>('DB_USERNAME') || 'postgres',
-        password: config.get<string>('DB_PASSWORD') || 'postgres',
-        database: config.get<string>('DB_NAME') || 'postgres',
-        autoLoadEntities: true,
-        synchronize: true, // ⚠️ Only for dev! (Auto-creates tables)
-      }),
+      useFactory: (config: ConfigService) => {
+        const databaseUrl = config.get<string>('DATABASE_URL');
+        const isProduction = config.get<string>('NODE_ENV') === 'production';
+
+        return {
+          type: 'postgres' as const,
+          // Use DATABASE_URL if available (Render), otherwise use individual params (local Docker)
+          ...(databaseUrl
+            ? { url: databaseUrl }
+            : {
+                host: config.get<string>('DB_HOST') || 'localhost',
+                port: config.get<number>('DB_PORT') || 5432,
+                username: config.get<string>('DB_USERNAME') || 'postgres',
+                password: config.get<string>('DB_PASSWORD') || 'postgres',
+                database: config.get<string>('DB_NAME') || 'postgres',
+              }),
+          autoLoadEntities: true,
+          synchronize: true, // ⚠️ Only for dev! (Auto-creates tables)
+          // SSL required for Render's managed PostgreSQL
+          ...(isProduction && {
+            ssl: { rejectUnauthorized: false },
+          }),
+        };
+      },
     }),
 
     UsersModule,
