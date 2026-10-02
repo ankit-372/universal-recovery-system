@@ -301,36 +301,7 @@ sequenceDiagram
 
 ## 🚀 Environment Setup & Deployment
 
-### 1. Environment Variables
-
-#### Core Backend (`apps/core-backend/.env`)
-```bash
-PORT=3000
-DATABASE_URL=postgres://admin:password@localhost:5432/recovery_db
-VISION_SERVICE_URL=http://localhost:8000
-CLOUDINARY_URL=cloudinary://Key:Secret@Cloud
-JWT_SECRET=your-super-secure-jwt-secret-min-32-chars
-REDIS_URL=redis://localhost:6379
-INTERNAL_API_KEY=your-internal-service-secret-key
-ADMIN_EMAIL=admin@recoveryai.com
-NODE_ENV=development
-ALLOWED_ORIGINS=http://localhost:5173
-```
-
-#### Vision Service (`apps/vision-service/.env`)
-```bash
-MILVUS_URI=https://your-zilliz-cluster.zillizcloud.com
-MILVUS_TOKEN=your-zilliz-api-token
-INTERNAL_API_KEY=your-internal-service-secret-key
-PORT=7860
-```
-
-#### Web Client (`apps/web-client/.env`)
-```bash
-VITE_API_URL=http://localhost:3000
-```
-
-### 2. Local Development with Docker Compose
+### 1. Local Development with Docker Compose
 
 Four local services can be spun up simultaneously:
 ```bash
@@ -341,7 +312,7 @@ docker-compose up -d
 - **MinIO** — S3-compatible local object store (`localhost:9000` / dashboard `localhost:9001`)
 - **Milvus Standalone** — Local vector database (`localhost:19530`)
 
-### 3. Running Services Locally
+### 2. Running Services Locally
 
 ```bash
 # Core Backend
