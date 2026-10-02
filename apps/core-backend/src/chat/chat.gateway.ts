@@ -4,17 +4,25 @@ import {
   MessageBody,
   WebSocketServer,
   ConnectedSocket,
+  OnGatewayInit,
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { ChatService } from './chat.service';
 import { Conversation } from './conversation.entity';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { SessionService } from '../auth/session.service';
+import { createWsJwtMiddleware } from './ws-jwt.middleware';
 
 @WebSocketGateway({
-  cors: { origin: '*' },
+  cors: {
+    origin: ['http://localhost:5173', /^https:\/\/.*\.onrender\.com$/],
+    credentials: true,
+  },
 })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -22,26 +30,43 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private activeUsers = new Map<string, string>();
 
   constructor(
-    private chatService: ChatService
+    private chatService: ChatService,
+    private jwtService: JwtService,
+    private configService: ConfigService,
+    private sessionService: SessionService,
   ) { }
+
+  afterInit(server: Server) {
+    // 🔒 Enforce JWT authentication on the WebSocket handshake
+    server.use(
+      createWsJwtMiddleware(this.jwtService, this.configService, this.sessionService),
+    );
+  }
 
   // --- Connection Handling ---
   handleConnection(client: Socket) {
-    const userId = client.handshake.query.userId as string;
-    if (userId) {
-      this.activeUsers.set(userId, client.id);
-      this.server.emit('user_status', { userId, status: 'online' });
-
-      // Send the list of online users to the connecting client
-      const onlineUserIds = Array.from(this.activeUsers.keys());
-      client.emit('online_users', onlineUserIds);
-
-      console.log(`🟢 User ${userId} is Online`);
+    // Identity is derived ONLY from the verified JWT, never client query params
+    const user = client.data?.user;
+    if (!user || !user.id) {
+      console.warn(`⚠️ Rejecting unauthenticated socket connection: ${client.id}`);
+      client.disconnect();
+      return;
     }
+
+    const userId = user.id;
+    this.activeUsers.set(userId, client.id);
+    this.server.emit('user_status', { userId, status: 'online' });
+
+    // Send the list of online users to the connecting client
+    const onlineUserIds = Array.from(this.activeUsers.keys());
+    client.emit('online_users', onlineUserIds);
+
+    console.log(`🟢 User ${userId} (${user.email}) connected via authenticated WebSocket`);
   }
 
   handleDisconnect(client: Socket) {
-    const userId = [...this.activeUsers.entries()]
+    const user = client.data?.user;
+    const userId = user?.id || [...this.activeUsers.entries()]
       .find(([_, socketId]) => socketId === client.id)?.[0];
 
     if (userId) {
@@ -54,62 +79,63 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // --- Chat Features ---
 
   @SubscribeMessage('join_room')
-  handleJoinRoom(@MessageBody() roomId: string, @ConnectedSocket() client: Socket) {
-    // Client joins the string-based room ID for real-time updates
-    client.join(roomId);
+  async handleJoinRoom(@MessageBody() roomId: string, @ConnectedSocket() client: Socket) {
+    const userId = client.data?.user?.id;
+    if (!userId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    try {
+      // 🔒 Authorization check: Ensure client is a participant in this conversation before joining
+      await this.chatService.verifyMembership(roomId, userId);
+      client.join(roomId);
+    } catch (err: any) {
+      client.emit('error', { message: err.message || 'Cannot join room: Forbidden' });
+    }
   }
 
   @SubscribeMessage('send_message')
-  async handleMessage(@MessageBody() payload: {
-    conversationId: string;
-    content: string;
-    senderId: string;
-    receiverId: string;
-    itemId?: string;
-  }) {
+  async handleMessage(
+    @MessageBody() payload: {
+      conversationId: string;
+      content: string;
+      receiverId: string;
+      itemId?: string;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    // 🔒 Critical fix: Deriving senderId strictly from the authenticated socket session
+    const senderId = client.data?.user?.id;
+    if (!senderId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
     let conversationId = payload.conversationId;
-
-    // 1. Logic Check: Do we need to create/find conversation first?
-    // Since we moved DB logic to Service, we can try to "ensure" conversation there.
-    // But Service methods are granular.
-    // For now, let's keep the "Legacy ID parsing" here or move it to a helper.
-    // Ideally, the Service should have a "ensureConversation" method.
-
-    const isLegacyId = payload.conversationId.startsWith('chat_item_');
     let dbConversation: Conversation | null = null;
 
-    if (isLegacyId) {
-      // chat_item_ITEMID_finder_FINDERID_seeker_SEEKERID
-      const parts = payload.conversationId.split('_');
-      const itemId = parts[2];
-      const finderId = parts[4];
-      const seekerId = parts[6];
-
-      // Use Service to get/create
-      dbConversation = await this.chatService.startConversation(finderId, seekerId, itemId);
-      if (dbConversation) conversationId = dbConversation.id;
+    try {
+      // Verify caller has permission to send messages to this conversation
+      const verifiedConv = await this.chatService.verifyMembership(conversationId, senderId);
+      dbConversation = verifiedConv;
+      conversationId = verifiedConv.id;
+    } catch (err: any) {
+      client.emit('error', { message: 'Forbidden: You cannot send messages to this conversation' });
+      return;
     }
 
-    if (!dbConversation && !isLegacyId) {
-      // It's already a UUID, just save message
-      // But wait, the service's sendMessage takes a conversation ID UUID.
-      // perfect.
-    }
-
-    // 2. Save Message via Service
-    // If we failed to get a DB conversation, we can't save.
-    // But startConversation should return one.
-
+    // 2. Save Message via Service with server-derived senderId
     const savedMessage = await this.chatService.sendMessage(
-      dbConversation ? dbConversation.id : conversationId,
-      payload.senderId,
-      payload.content
+      conversationId,
+      senderId,
+      payload.content,
     );
 
-    // 3. Emit back to the Room (using the ID the client knows)
+    // 3. Emit back to the Room
     this.server.to(payload.conversationId).emit('receive_message', {
       ...savedMessage,
-      conversationId: payload.conversationId
+      conversationId: payload.conversationId,
     });
 
     // 4. Notification
@@ -117,50 +143,56 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (receiverSocketId) {
       this.server.to(receiverSocketId).emit('notification', {
         type: 'message',
-        from: payload.senderId,
+        from: senderId,
         content: payload.content,
-        conversationId: payload.conversationId
+        conversationId: payload.conversationId,
       });
     }
   }
 
   @SubscribeMessage('get_messages')
-  async handleGetMessages(@MessageBody() roomId: string) {
-    // Logic to fetch messages.
-    if (roomId.startsWith('chat_item_')) {
-      const parts = roomId.split('_');
-      const itemId = parts[2];
-      const finderId = parts[4];
-      const seekerId = parts[6];
-
-      const conversation = await this.chatService.startConversation(finderId, seekerId, itemId);
-      if (!conversation) return [];
-
-      return this.chatService.getMessages(conversation.id);
+  async handleGetMessages(
+    @MessageBody() roomId: string,
+    @ConnectedSocket() client: Socket,
+  ) {
+    const userId = client.data?.user?.id;
+    if (!userId) {
+      return { error: 'Unauthorized' };
     }
 
-    return this.chatService.getMessages(roomId);
+    try {
+      const conv = await this.chatService.verifyMembership(roomId, userId);
+      return this.chatService.getMessages(conv.id);
+    } catch (err: any) {
+      return { error: err.message || 'Forbidden' };
+    }
   }
 
   @SubscribeMessage('delete_message')
-  async handleDeleteMessage(@MessageBody() payload: {
-    messageId: string;
-    conversationId: string;
-    senderId: string;
-  }) {
-    // 1. Delete in DB
-    try {
-      await this.chatService.deleteMessage(payload.senderId, payload.messageId);
+  async handleDeleteMessage(
+    @MessageBody() payload: {
+      messageId: string;
+      conversationId: string;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    // 🔒 Deriving senderId strictly from authenticated socket session
+    const senderId = client.data?.user?.id;
+    if (!senderId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
 
-      // 2. Broadcast to Room
+    try {
+      await this.chatService.deleteMessage(senderId, payload.messageId);
+
       this.server.to(payload.conversationId).emit('message_deleted', {
         messageId: payload.messageId,
         conversationId: payload.conversationId,
       });
-
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to delete message:", error.message);
-      // Optional: Emit error back to sender
+      client.emit('error', { message: error.message });
     }
   }
 }

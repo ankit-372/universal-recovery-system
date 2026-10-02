@@ -1,24 +1,34 @@
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Request } from 'express'; // 🟦 Import Request for types
+import { Request } from 'express';
+import { SessionService } from './session.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(configService: ConfigService) {
-    const secret = configService.get<string>('JWT_SECRET') || 'DEV_SECRET_KEY';
-    
+  constructor(
+    configService: ConfigService,
+    private sessionService: SessionService,
+  ) {
+    const secret = configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new Error(
+        'FATAL: JWT_SECRET environment variable is missing. Security policy requires server to fail closed.',
+      );
+    }
+
     super({
-      // 🟦 1. Extract from Cookie instead of Auth Header
+      // Extract from HttpOnly Cookie first, with fallback to Bearer Auth Header
       jwtFromRequest: ExtractJwt.fromExtractors([
         (request: Request) => {
           let token = null;
           if (request && request.cookies) {
-            token = request.cookies['jwt']; // Read the 'jwt' cookie
+            token = request.cookies['jwt'];
           }
           return token;
         },
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       ignoreExpiration: false,
       secretOrKey: secret,
@@ -26,7 +36,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    // 🟦 2. Attach user to Request (req.user)
+    // Check server-side session if sid exists in payload
+    if (payload.sid) {
+      const isValid = await this.sessionService.validateSession(payload.sub, payload.sid);
+      if (!isValid) {
+        throw new UnauthorizedException('Session has expired or was revoked. Please log in again.');
+      }
+    }
+
+    // Attach user to Request (req.user)
     return { id: payload.sub, email: payload.email, name: payload.name };
   }
 }

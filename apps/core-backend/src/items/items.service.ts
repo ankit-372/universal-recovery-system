@@ -44,6 +44,7 @@ export class ItemsService {
       const response = await firstValueFrom(
         this.httpService.post(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/analyze`, formData, {
           headers: { ...formData.getHeaders() },
+          timeout: 30000, // 🔒 30s timeout to prevent thread exhaustion during AI inference
         }),
       );
 
@@ -105,7 +106,8 @@ export class ItemsService {
 
         response = await firstValueFrom(
           this.httpService.post(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/search`, formData, {
-            headers: { ...formData.getHeaders() }
+            headers: { ...formData.getHeaders() },
+            timeout: 15000, // 🔒 15s timeout
           })
         );
       }
@@ -117,7 +119,8 @@ export class ItemsService {
 
         response = await firstValueFrom(
           this.httpService.post(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/search`, params, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            timeout: 15000, // 🔒 15s timeout
           })
         );
       }
@@ -162,9 +165,19 @@ export class ItemsService {
     // 1. Clear Postgres
     await this.itemsRepository.clear(); // Truncates the table
 
-    // 2. Clear Milvus
+    // 2. Clear Milvus (with internal service authentication)
     try {
-      await firstValueFrom(this.httpService.delete(`${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/reset`));
+      await firstValueFrom(
+        this.httpService.delete(
+          `${process.env.VISION_SERVICE_URL || 'http://localhost:8000'}/reset`,
+          {
+            headers: {
+              'X-Internal-Key': process.env.INTERNAL_API_KEY || '',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
       console.log("✅ Milvus reset successfully");
     } catch (e) {
       console.error("❌ Failed to reset Milvus:", e.message);

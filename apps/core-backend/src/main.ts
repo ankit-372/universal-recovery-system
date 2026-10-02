@@ -1,28 +1,49 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import cookieParser from 'cookie-parser'; // 🟦 1. Import cookie-parser
-
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
-  // 🟦 3. Create Nest app
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-  app.set('trust proxy', 1); // 🛡️ CRITICAL for Render: Allows secure cookies behind AWS Load Balancer
+  app.set('trust proxy', 1); // 🛡️ CRITICAL for Render/Proxies: Allows secure cookies behind reverse proxies
 
-  // 🟦 4. Use Cookie Parser (New Security Step)
-  // This allows the server to read the 'token' cookie from the request
+  // 🔒 1. Security Headers via Helmet (CSP, HSTS, X-Content-Type-Options, etc.)
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allows serving proxied images
+    }),
+  );
+
+  // 🔒 2. Request body size limit to mitigate payload-based DoS
+  app.use(json({ limit: '1mb' }));
+  app.use(urlencoded({ extended: true, limit: '1mb' }));
+
+  // 🔒 3. Cookie Parser for HttpOnly cookie auth
   app.use(cookieParser());
 
-  // 🟦 5. Enable CORS with Credentials
-  // 🟦 5. Enable CORS with Credentials
+  // 🔒 4. Tightened CORS configuration
+  const envOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : [];
+
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    /^https:\/\/.*\.onrender\.com$/,
+    ...envOrigins,
+  ];
+
   app.enableCors({
-    origin: ['http://localhost:5173', /^https:\/\/.*\.onrender\.com$/], // Dynamic Cloud URLs
+    origin: allowedOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true, // ⚠️ CRITICAL: Allows cookies to be sent back and forth
+    credentials: true,
   });
 
-  // 🟦 6. Start server
-  await app.listen(process.env.PORT ?? 3000);
+  const port = process.env.PORT ?? 3000;
+  await app.listen(port);
+  console.log(`🚀 Universal Recovery System Backend listening on port ${port}`);
 }
 
 bootstrap();

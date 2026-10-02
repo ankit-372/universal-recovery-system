@@ -41,17 +41,21 @@ export class ChatController {
 
     // Get History (For Scrolling)
     @Get(':conversationId/messages')
-    async getMessages(@Param('conversationId') conversationId: string) {
-        return this.chatService.getMessages(conversationId);
+    async getMessages(@Param('conversationId') conversationId: string, @Req() req) {
+        const myId = req.user.id || req.user.userId || req.user.sub;
+        // Verify user is an authorized participant before returning messages (IDOR/BOLA prevention)
+        const conversation = await this.chatService.verifyMembership(conversationId, myId);
+        return this.chatService.getMessages(conversation.id);
     }
 
     // Delete a Message
     @Delete('message/:id')
     async deleteMessage(@Req() req, @Param('id') messageId: string) {
         try {
-            return await this.chatService.deleteMessage(req.user.id, messageId);
+            const myId = req.user.id || req.user.userId || req.user.sub;
+            return await this.chatService.deleteMessage(myId, messageId);
         } catch (error) {
-            // Return a nice 403 error if they try to delete someone else's message
+            // Return a 403 error if trying to delete someone else's message
             throw new HttpException(error.message, HttpStatus.FORBIDDEN);
         }
     }

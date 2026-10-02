@@ -1,0 +1,43 @@
+services:
+  # 1. PostgreSQL Database
+  - type: web
+    name: core-backend
+    env: node
+    plan: free
+    rootDir: apps/core-backend
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: urs-postgres
+          property: connectionString
+      - key: CLOUDINARY_URL
+        sync: false # User must manually enter this via dashboard
+      - key: VISION_SERVICE_URL
+        sync: false # HuggingFace URL
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+
+  # 2. React Frontend
+  - type: web
+    name: web-client
+    env: static
+    rootDir: apps/web-client
+    buildCommand: npm install --include=dev && npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false # You will manually paste the Backend URL here (e.g. https://core-backend-xxxx.onrender.com)
+
+databases:
+  - name: urs-postgres
+    databaseName: recovery_db
+    user: dbadmin
+    plan: free

@@ -330,9 +330,16 @@ async def debug_collection():
     except Exception as e:
         return {"error": str(e)}
 
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+
 @app.delete("/reset")
-async def reset_collection():
-    """Reset the Milvus collection"""
+async def reset_collection(request: Request):
+    """Reset the Milvus collection (requires internal API key authentication)"""
+    if INTERNAL_API_KEY:
+        auth_header = request.headers.get("X-Internal-Key", "")
+        if auth_header != INTERNAL_API_KEY:
+            raise HTTPException(status_code=403, detail="Forbidden: Invalid or missing internal service key")
+
     try:
         if utility.has_collection(COLLECTION_NAME):
             collection = Collection(COLLECTION_NAME)

@@ -4,30 +4,32 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { UsersModule } from '../users/users.module'; // Import UsersModule
-import { UsersService } from '../users/users.service';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { User } from '../users/entities/user.entity';
+import { UsersModule } from '../users/users.module';
 import { EmailService } from './email.service';
-
 import { JwtStrategy } from './jwt.strategy';
+import { SessionService } from './session.service';
 
 @Module({
   imports: [
-    UsersModule, // We use the exported UsersService from here
+    UsersModule,
     PassportModule,
-    // TypeOrmModule.forFeature([User]), // ❌ Removed: UsersService handles DB access
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'DEV_SECRET_KEY',
-        signOptions: { expiresIn: '1h' },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error('FATAL: JWT_SECRET environment variable is missing.');
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: '1h' },
+        };
+      },
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, EmailService], // ❌ Removed UsersService from here (it's imported)
-  exports: [AuthService, JwtStrategy, PassportModule]
+  providers: [AuthService, JwtStrategy, EmailService, SessionService],
+  exports: [AuthService, JwtStrategy, PassportModule, JwtModule, SessionService],
 })
 export class AuthModule { }

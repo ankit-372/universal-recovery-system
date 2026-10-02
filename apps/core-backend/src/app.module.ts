@@ -1,21 +1,30 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ItemsModule } from './items/items.module';
-import { ChatModule } from './chat/chat.module'; // <--- 1. Import ChatModule
+import { ChatModule } from './chat/chat.module';
+import { CsrfMiddleware } from './common/csrf.middleware';
 
 @Module({
   imports: [
     // 1. Load .env variables
     ConfigModule.forRoot({
-      isGlobal: true, 
+      isGlobal: true,
     }),
 
-    // 2. Connect to Postgres
+    // 2. Global Rate Limiter: Default 60 requests per minute
+    ThrottlerModule.forRoot([{
+      ttl: 60000,
+      limit: 60,
+    }]),
+
+    // 3. Connect to Postgres
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -36,7 +45,7 @@ import { ChatModule } from './chat/chat.module'; // <--- 1. Import ChatModule
                 database: config.get<string>('DB_NAME') || 'postgres',
               }),
           autoLoadEntities: true,
-          synchronize: true, // ⚠️ Only for dev! (Auto-creates tables)
+          synchronize: !isProduction, // 🔒 Disabled in production to prevent unintended schema mutation/data loss
           // SSL required for Render's managed PostgreSQL
           ...(isProduction && {
             ssl: { rejectUnauthorized: false },
@@ -48,9 +57,21 @@ import { ChatModule } from './chat/chat.module'; // <--- 1. Import ChatModule
     UsersModule,
     AuthModule,
     ItemsModule,
-    ChatModule, // <--- 2. Add to Imports array
+    ChatModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // 🔒 Enable global rate limiting guard
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // 🔒 Apply CSRF protection middleware across all API routes
+    consumer.apply(CsrfMiddleware).forRoutes('*');
+  }
+}

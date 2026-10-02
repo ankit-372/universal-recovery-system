@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Conversation } from './conversation.entity';
@@ -15,6 +15,44 @@ export class ChatService {
         @InjectRepository(User)
         private userRepo: Repository<User>,
     ) { }
+
+    // Verify user is an authorized participant of the conversation
+    async verifyMembership(conversationId: string, userId: string): Promise<Conversation> {
+        if (!conversationId || !userId) {
+            throw new ForbiddenException('Access denied');
+        }
+
+        // Handle legacy format: chat_item_ITEMID_finder_FINDERID_seeker_SEEKERID
+        if (conversationId.startsWith('chat_item_')) {
+            const parts = conversationId.split('_');
+            const finderId = parts[4];
+            const seekerId = parts[6];
+            if (userId !== finderId && userId !== seekerId) {
+                throw new ForbiddenException('You are not a participant in this conversation');
+            }
+            const itemId = parts[2];
+            return this.startConversation(finderId, seekerId, itemId);
+        }
+
+        const conversation = await this.conversationRepo.findOne({
+            where: { id: conversationId },
+            relations: ['finder', 'receiver'],
+        });
+
+        if (!conversation) {
+            throw new NotFoundException('Conversation not found');
+        }
+
+        const isParticipant =
+            (conversation.finder && conversation.finder.id === userId) ||
+            (conversation.receiver && conversation.receiver.id === userId);
+
+        if (!isParticipant) {
+            throw new ForbiddenException('You are not authorized to view or access this conversation');
+        }
+
+        return conversation;
+    }
 
     // 1. Start a new chat (When a match is found)
     async startConversation(finderId: string, receiverId: string, itemId: string) {
