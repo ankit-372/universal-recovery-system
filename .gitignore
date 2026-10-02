@@ -28,8 +28,14 @@ thumbs.db
 *.pdf
 *.mp4
 *.mp3
+*.m4a
 *.wav
 *.mkv
+
+# Temporary / Documentation / Scratch files
+DOCS/
+solution.cpp
+project_summary.md
 
 # Database Data
 postgres_data/
