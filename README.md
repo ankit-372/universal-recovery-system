@@ -20,15 +20,16 @@ graph TD
     
     subgraph "Render Cloud · Node.js"
         Gateway -->|Relational Data| PG[(PostgreSQL)]
-        Gateway -->|Proxy Image Fetch| Cloudinary[(Cloudinary CDN)]
+        Gateway -->|Image Upload & CDN| Cloudinary[(Cloudinary CDN)]
         Gateway -->|Sessions & Rate Limiting| Redis[(Redis)]
+        Gateway -->|Proxy Image Fetch| Cloudinary
     end
     
     subgraph "Hugging Face Space · Python / PyTorch"
-        Gateway -->|REST API with Auth| Vision[FastAPI Vision Service]
-        Vision -->|Generate Embedding| CLIP[OpenAI CLIP Model]
-        Vision -->|Object Detection| YOLO[YOLOv8 Model]
-        Vision -->|Store / Search Vector| Zilliz[(Zilliz Cloud Vector DB)]
+        Gateway -->|REST API · Multipart Form| Vision[FastAPI Vision Service]
+        Vision -->|Generate 512D Embedding| CLIP[OpenAI CLIP ViT-B/32]
+        Vision -->|Object Detection · conf 0.25| YOLO[YOLOv8 Nano]
+        Vision -->|Store / Search / Reset Vector| Zilliz[(Zilliz Cloud / Milvus Vector DB)]
     end
 ```
 
@@ -36,18 +37,18 @@ graph TD
 
 | Service | Language | Framework | Deployed On |
 |---|---|---|---|
-| **Web Client** (Presentation Layer) | TypeScript | React 19 + Vite | Render (Static Site) |
-| **Core Backend** (API Gateway & Orchestrator) | TypeScript | NestJS 11 | Render (Web Service) |
-| **Vision Service** (AI/ML Engine) | Python | FastAPI + PyTorch | Hugging Face Spaces (Docker) |
+| **Web Client** (Presentation Layer) | TypeScript | React 19 + Vite 7 + TailwindCSS v4 | Render (Static Site) |
+| **Core Backend** (API Gateway & Orchestrator) | TypeScript | NestJS 11 + TypeORM | Render (Web Service) |
+| **Vision Service** (AI/ML Engine) | Python | FastAPI + PyTorch + Ultralytics | Hugging Face Spaces (Docker) |
 
 ### Four-Database Strategy
 
 | Database | Type | Purpose |
 |---|---|---|
-| **PostgreSQL** (Render) | Relational (SQL) | Users, Items, Conversations, Messages — canonical truth |
-| **Zilliz Cloud** (Milvus-compatible) | Serverless Vector DB | 512-dimensional CLIP embeddings for similarity search |
-| **Cloudinary** | Cloud CDN / Object Storage | Raw image and media file storage |
-| **Redis** | In-memory Key-Value | Single-device sessions, JWT revocation, distributed rate limiting |
+| **PostgreSQL** (Render) | Relational (SQL) | Users, Items (with vector/tags), Conversations, Messages — canonical truth |
+| **Zilliz Cloud** (Milvus-compatible) | Serverless Vector DB | 512-dimensional CLIP embeddings for ANN similarity search (IVF_FLAT, IP metric) |
+| **Cloudinary** | Cloud CDN / Object Storage | Raw image uploads via stream piping, CDN URL storage |
+| **Redis** (with in-memory fallback) | In-memory Key-Value | Single-device session enforcement, JWT session revocation, rate limiting |
 
 ---
 
@@ -158,15 +159,17 @@ graph TD
 ### 1. Cookie-Based JWT & Redis Session Management
 - **HttpOnly Secure Cookies:** JWT tokens are stored in `HttpOnly`, `secure: true`, `sameSite: 'none'` cookies, preventing XSS-based credential theft.
 - **Fail-Closed Secrets:** Bootstrapping fails immediately if `JWT_SECRET` is unset, preventing predictable signature vulnerabilities.
-- **Redis Session Revocation:** Each login assigns a unique `sid` (session ID) stored in Redis. Logout or password reset immediately invalidates the active session across all devices.
+- **Redis Session Revocation with Memory Fallback:** Each login assigns a unique `sid` (session ID) stored in Redis with 1-hour TTL. If Redis is unavailable (e.g., local dev), an in-memory `Map` with TTL-based expiry acts as a fallback. Logout or password reset immediately invalidates the active session.
+- **Single-Device Enforcement:** Creating a new session implicitly overwrites any previous session for the same user, enforcing single-device login.
 
 ### 2. WebSocket Handshake Authentication
-- Real-time Socket.IO connections run custom JWT authentication middleware during connection handshake.
+- Real-time Socket.IO connections run a custom `createWsJwtMiddleware` during connection handshake that validates JWT and session ID.
 - Unauthenticated or forged connection requests are dropped before entering rooms.
-- **Server-Derived Identity:** In chat events, `senderId` is resolved exclusively from the verified socket identity rather than client-supplied payloads, preventing impersonation.
+- **Server-Derived Identity:** In all chat events (`send_message`, `delete_message`), `senderId` is resolved exclusively from `client.data.user.id` (set during handshake verification) rather than client-supplied payloads, preventing impersonation.
 
 ### 3. IDOR / BOLA Prevention
-- Chat room joining and message history endpoints enforce strict participant membership checks against PostgreSQL records.
+- Chat room joining (`join_room`), message retrieval, and message sending all enforce strict participant `verifyMembership()` checks against PostgreSQL records.
+- Supports both UUID-based conversation IDs and legacy `chat_item_` prefixed IDs with participant extraction and validation.
 - Non-participant attempts to query or post to conversations result in immediate `403 Forbidden` responses.
 
 ### 4. File Upload & Magic-Byte Verification
@@ -174,76 +177,89 @@ graph TD
 - File extension spoofing is detected and blocked before reaching disk or cloud pipelines.
 
 ### 5. SSRF-Hardened Image Proxy
-- Cloudinary images are proxied through `/items/image/proxy` to circumvent ISP/tracker blocks.
-- URLs are strictly parsed using standard URL parsers, strictly restricting destinations to `https://res.cloudinary.com` and rejecting embedded user credentials.
+- Cloudinary images are proxied through `GET /items/image/proxy?url=` to circumvent ISP/tracker blocks.
+- URLs are strictly parsed using the standard `URL` constructor, restricting destinations to `https://res.cloudinary.com` and rejecting embedded user credentials (`parsed.username`, `parsed.password`).
+- Upstream response `Content-Type` is validated to start with `image/` before piping to the client.
 
 ### 6. CSRF & Network Protection
-- CSRF middleware validates custom request headers (`X-Requested-With: XMLHttpRequest`) and whitelisted origins for all mutating HTTP methods (POST, PUT, DELETE, PATCH).
-- Global and route-level rate limiting via `ThrottlerModule` mitigates credential stuffing, search saturation, and brute-force token attempts.
-- HTTP security headers are enforced via `helmet`. Request body payloads are capped at 1MB to prevent memory exhaustion.
-- Internal service-to-service endpoints (`/reset`) require shared secret authentication via `X-Internal-Key`.
+- CSRF middleware (`CsrfMiddleware`) validates custom request headers (`X-Requested-With: XMLHttpRequest`) and whitelisted origins for all mutating HTTP methods (POST, PUT, DELETE, PATCH). Applied globally via `AppModule.configure()`.
+- **Tiered Rate Limiting:** Global default (60 req/min) with route-specific overrides — login (5/min), forgot-password (3/min), reset-password (5/min), item creation (10/min), search (20/min), image proxy (30/min).
+- HTTP security headers are enforced via `helmet` with `crossOriginResourcePolicy: 'cross-origin'` for proxied images. Request body payloads are capped at 1MB.
+- Internal service-to-service endpoints (`/reset`) require shared secret authentication via `X-Internal-Key` header.
 
 ---
 
 ## 📦 Backend Module Architecture (NestJS)
 
-The backend follows NestJS's **modular architecture pattern** with dependency injection:
+The backend follows NestJS's **modular architecture pattern** with dependency injection. Four feature modules (`AuthModule`, `UsersModule`, `ItemsModule`, `ChatModule`) are imported into the root `AppModule`.
 
 ### 1. Auth Module
-- **Controller:** `/auth/signup`, `/auth/login`, `/auth/logout`, `/auth/me`, `/auth/forgot-password`, `/auth/reset-password`
-- **Service:** Handles registration (with duplicate email detection), login (credential verification), JWT signing, session generation, and password reset logic
-- **JWT Strategy:** Custom Passport strategy extracting JWTs from cookies with Redis session lookup
-- **Email Service:** Nodemailer-based transactional email for password reset links
+- **Controller:** `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/forgot-password`, `POST /auth/reset-password`
+- **Service:** Handles login (credential verification via bcrypt), JWT signing with embedded session ID (`sid`), session generation/revocation, and password reset logic (SHA-256 hashed tokens stored in PostgreSQL)
+- **JWT Strategy:** Custom Passport strategy extracting JWTs from HttpOnly cookies (with Bearer header fallback) and validating the embedded `sid` against Redis/memory session store
+- **Session Service:** Redis-backed session store (`ioredis`) with automatic in-memory `Map` fallback. Implements `createSession()`, `validateSession()`, and `revokeSession()` for single-device enforcement
+- **Email Service:** Nodemailer-based transactional email for password reset links via Gmail SMTP
+- **Guard:** `DebugAuthGuard` wrapping `AuthGuard('jwt')` used across protected routes
 
 ### 2. Users Module
-- **Controller:** `/users/profile` (GET & PUT)
-- **Service:** CRUD operations for user entities, profile retrieval, and password updates
-- **Entity:** `User` — id, name, email (unique), password (hashed), createdAt
+- **Controller:** `POST /users` (create/signup), `GET /users` (list all), `GET /users/:id`, `PATCH /users/:id`, `DELETE /users/:id`
+- **Service:** CRUD operations with duplicate email detection (`ConflictException`), bcrypt password hashing with salt, reset token management (`setResetToken`, `findByResetToken`, `updatePasswordAndClearToken`)
+- **Entity:** `User` — id (UUID), email (unique), passwordHash, fullName, isVerified (boolean), resetPasswordToken (nullable), resetPasswordExpires (nullable timestamp), createdAt, updatedAt
 
 ### 3. Items Module
-- **Controller:** `/items` (GET all user items), `/items` (POST create), `/items/search` (POST), `/items/image/proxy` (GET), `/items/nuke` (DELETE, admin only)
+- **Controller:** `POST /items` (create with file upload), `POST /items/search` (text-only search), `GET /items` (list all), `GET /items/mine` (user's items), `GET /items/image/proxy` (SSRF-protected CDN proxy), `DELETE /items/nuke` (admin-only, production-disabled)
 - **Service:**
-  - **Create flow:** Upload image to Cloudinary → Save item to PostgreSQL → Forward image to Vision Service for CLIP embedding + YOLO detection → Store vector in Zilliz
-  - **Search flow:** Forward query (image/text) to Vision Service → Receive top-5 vector matches with external IDs → Hydrate results from PostgreSQL using `IN` clause → Return combined results
-  - **Proxy flow:** Receives Cloudinary URL, verifies origin, and pipes raw image blob to the client
-- **Entity:** `Item` — id, name, description, location, isLost (boolean), imageUrl, userId, detectedObjects (string array), createdAt
+  - **Create flow:** Validate file (magic bytes) → Upload image buffer to Cloudinary via stream → Save `Item` to PostgreSQL → POST multipart form to Vision Service `/analyze` (30s timeout) → Receive detected objects + vector → Update item `tags` and `vector` in PostgreSQL. If item `isLost`, automatically searches for matching found items (image vector search against `is_lost=false` filter), excludes self-posted items, returns top 5 sorted by score.
+  - **Search flow:** Forward text query (URL-encoded form) or image (multipart) to Vision Service `/search` with optional `filter_is_lost` → Receive top-5 vector matches with `external_id` and `score` → Hydrate from PostgreSQL using `IN` clause with user relations → Return merged results
+  - **Proxy flow:** Parses URL with `new URL()`, validates `https://res.cloudinary.com` origin, rejects embedded credentials, validates upstream `Content-Type` starts with `image/`, pipes raw blob with 1-year cache header
+- **Entity:** `Item` — id (UUID), description, imageUrl, tags (simple-array, nullable — YOLO detected labels), vector (float array, nullable — 512D CLIP embedding), isLost (boolean, default false), user (ManyToOne → User), createdAt
 
 ### 4. Chat Module
-- **Controller:** REST endpoints for creating/retrieving conversations and messages with membership validation
+- **Controller:** `POST /chat/start` (create/deduplicate conversation), `GET /chat/inbox` (user's conversations with last message preview), `GET /chat/conversations` (backward-compatible alias), `GET /chat/:conversationId/messages` (with membership verification), `DELETE /chat/message/:id` (sender-only soft delete)
 - **Service:**
-  - Conversation deduplication using normalized user ID pairs: `[min(a,b), max(a,b)]`
-  - Last message preview for inbox display
-  - Chronological message retrieval
-  - IDOR-safe membership verification
-- **WebSocket Gateway:**
-  - Room-based architecture: each conversation has a dedicated room (`conversation_{id}`)
-  - Handshake JWT middleware validation
-  - Server-side verified `senderId` emission
+  - Conversation deduplication using `finderId + receiverId + itemId` composite lookup
+  - Legacy conversation ID parsing: `chat_item_{itemId}_finder_{finderId}_seeker_{seekerId}` format support
+  - Inbox transformation: returns `conversationId` (legacy format), `dbId`, `otherUserName`, `otherUserId`, `content` (last message preview), `updatedAt`, `itemId`
+  - `verifyMembership()` — IDOR-safe authorization check supporting both UUID and legacy ID formats
+  - Soft delete: sets `content` to `'🚫 This message was deleted'` and `isDeleted = true`
+- **WebSocket Gateway (`ChatGateway`):**
+  - Room-based architecture with `activeUsers` Map tracking `userId → socketId`
+  - `afterInit()`: Applies `createWsJwtMiddleware` for handshake JWT + session validation
+  - Events: `join_room` (with membership check), `send_message` (server-derived `senderId`), `get_messages`, `delete_message` (sender-only with broadcast)
+  - Connection lifecycle: emits `user_status` (online/offline) and `online_users` list on connect
+  - Real-time notifications emitted to receiver's socket on new message
 - **Entities:**
-  - `Conversation` — id, user1Id, user2Id, createdAt, updatedAt
-  - `Message` — id, conversationId, senderId, content (text), createdAt
+  - `Conversation` — id (UUID), itemId, finder (ManyToOne → User), receiver (ManyToOne → User), messages (OneToMany → Message), createdAt, updatedAt
+  - `Message` — id (UUID), content, isDeleted (boolean, default false), conversation (ManyToOne → Conversation, CASCADE delete), sender (ManyToOne → User), createdAt
 
 ---
 
 ## 🖥️ Frontend Architecture (React)
 
-### Routing (11 Routes)
-| Route | Page | Auth Required |
+### Routing (9 Routes)
+| Route | Page Component | Auth Required |
 |---|---|---|
-| `/` | Home (landing page) | No |
-| `/login` | Login form | No |
-| `/signup` | Registration form | No |
-| `/search` | AI-powered search (text/image) | No |
-| `/report-lost` | Report a lost item with image upload | Yes |
-| `/report-found` | Report a found item | Yes |
-| `/inbox` | Real-time chat inbox | Yes |
-| `/profile` | User profile + reported items | Yes |
-| `/forgot-password` | Password reset request | No |
-| `/reset-password` | Password reset form (token-based) | No |
+| `/` | `Home` (landing page) | No |
+| `/login` | `Login` (login form) | No |
+| `/signup` | `Signup` (registration form) | No |
+| `/report-lost` | `ReportLost` (report lost item with image upload + auto-match) | Yes |
+| `/report-found` | `ReportFound` (report a found item) | Yes |
+| `/inbox` | `Inbox` (real-time chat inbox with `ChatWindow`) | Yes |
+| `/profile` | `Profile` (user profile + reported items) | Yes |
+| `/forgot-password` | `ForgotPassword` (password reset request) | No |
+| `/reset-password` | `ResetPassword` (password reset form, token-based) | No |
+| `*` | Redirects to `/` | No |
+
+**Additional Page Components** (not in router but available): `SearchItems` (text-based AI search), `UploadLost`
+
+### Component Hierarchy
+- **`App`** → `AuthProvider` → `SocketProvider` → `BrowserRouter` → `AppContent`
+- **`AppContent`** → `Navbar` + `Routes` (with `ProtectedRoute` wrapper for auth-required pages)
+- **`Inbox`** → `ChatWindow` (Socket.IO-powered real-time messaging)
 
 ### State Management
-- **AuthContext:** Global authentication state using React Context API. On mount, calls `/auth/me` to check for existing session cookie. Provides `user`, `setUser`, and `loading` to the entire app tree.
-- **SocketContext:** Manages Socket.IO lifecycle tied to authentication state. Connects when user is present, disconnects on logout. Provides the socket instance to chat components.
+- **AuthContext:** Global authentication state using React Context API. On mount, calls `GET /auth/me` to check for existing session cookie. Provides `user`, `isAuthenticated`, `isLoading`, and `setUser` to the entire app tree via `useAuth()` hook.
+- **SocketContext:** Manages Socket.IO lifecycle tied to authentication state. Connects when user is present, disconnects on logout. Provides the socket instance to chat components via `useSocket()` hook.
 
 ---
 
@@ -287,15 +303,16 @@ sequenceDiagram
 
 ## 🔀 Core Data Flow: Item Registration Sequence
 
-1. **User uploads** an image + metadata (name, description, location, isLost) via the React form
-2. **NestJS receives** the multipart request and validates file size, MIME-type, and magic bytes
-3. **Cloudinary upload:** Raw image buffer is streamed to Cloudinary's secure upload API, returning a CDN URL
-4. **PostgreSQL insert:** A new `Item` record is created with metadata and the Cloudinary URL
-5. **Vision Service call:** NestJS posts the file buffer, item ID, description, and `is_lost` flag to FastAPI `/analyze` with a 30-second timeout
-6. **YOLO detection:** Vision Service runs YOLOv8 Nano on the image, detecting object classes (>25% confidence)
-7. **CLIP embedding:** The image passes through CLIP ViT, producing a 512D tensor which is L2-normalized
-8. **Vector storage:** The normalized embedding, PostgreSQL item ID, enriched description, and `is_lost` boolean are inserted into Zilliz Cloud
-9. **Metadata update:** Detected labels are saved to `detectedObjects` in PostgreSQL
+1. **User uploads** an image + metadata (description, type: 'lost'/'found') via the React form
+2. **NestJS receives** the multipart request via `FileInterceptor` and validates file size (5MB limit), MIME-type, and magic bytes via `validateUploadedFile()`
+3. **Cloudinary upload:** Raw image buffer is streamed to Cloudinary's secure upload API via `uploadToCloudinary()`, returning a CDN URL
+4. **PostgreSQL insert:** A new `Item` record is created with description, imageUrl, isLost flag, empty tags/vector arrays, and user relation
+5. **Vision Service call:** NestJS posts the file buffer, item ID, description, and `is_lost` flag as multipart form to FastAPI `/analyze` with a 30-second timeout
+6. **YOLO detection:** Vision Service runs YOLOv8 Nano on the image, detecting object classes (>25% confidence), deduplicates labels
+7. **CLIP embedding:** The image passes through CLIP ViT, producing a 512D tensor which is L2-normalized (`vector / ||vector||₂`)
+8. **Vector storage:** The normalized embedding, PostgreSQL item ID (as `external_id`), enriched description (original + YOLO labels), and `is_lost` boolean are inserted into Zilliz Cloud collection `lost_items_v3` and flushed
+9. **Metadata update:** Detected labels are saved to `tags` and the full 512D vector is saved to `vector` in PostgreSQL
+10. **Auto-matching (Lost items only):** If `isLost=true`, the service immediately performs a vector search against all **found** items (`filter_is_lost=false`), excludes self-posted items, sorts by similarity score descending, and returns the top 5 matches alongside the saved item
 
 ---
 
@@ -362,18 +379,20 @@ The repository includes architectural scaling blueprints for transitioning from 
 
 | Concept | Where Applied |
 |---|---|
-| **Microservices Architecture** | Three independent services communicating over authenticated HTTP/REST |
-| **Vector Embeddings** | CLIP model converts images/text into 512D mathematical representations |
-| **Approximate Nearest Neighbor (ANN)** | IVF_FLAT index for sub-millisecond similarity search |
-| **Cross-Modal Search** | Text queries match against image embeddings in shared vector space |
+| **Microservices Architecture** | Three independent services communicating over authenticated HTTP/REST with multipart form payloads |
+| **Vector Embeddings** | CLIP model converts images/text into 512D mathematical representations stored in both Milvus and PostgreSQL |
+| **Approximate Nearest Neighbor (ANN)** | IVF_FLAT index (nlist=128, nprobe=10) for sub-millisecond similarity search |
+| **Cross-Modal Search** | Text queries match against image embeddings in shared 512D vector space |
 | **Cosine Similarity** | Semantic matching via Inner Product on L2-normalized vectors |
-| **Object Detection** | YOLOv8 identifies objects in uploaded images for metadata enrichment |
-| **JWT & Session Revocation** | Stateless tokens with Redis single-device session tracking |
-| **WebSocket (Socket.IO)** | Bidirectional real-time chat with room-based broadcasting and JWT auth |
-| **Image Proxy / ISP Bypass** | Backend proxies CDN images to circumvent tracker blocking |
+| **Object Detection** | YOLOv8 Nano identifies objects in uploaded images for description enrichment and tag storage |
+| **JWT & Session Revocation** | Stateless tokens with Redis single-device session tracking and in-memory fallback |
+| **WebSocket (Socket.IO)** | Bidirectional real-time chat with room-based broadcasting, JWT handshake auth, and online presence tracking |
+| **Soft Delete** | Messages are soft-deleted by replacing content and setting `isDeleted` flag, preserving conversation history |
+| **Image Proxy / ISP Bypass** | Backend proxies CDN images with SSRF protection, credential rejection, and content-type validation |
 | **Stream Processing** | Buffer-to-stream piping for Cloudinary uploads and image proxying |
-| **ORM (TypeORM)** | Declarative entity mapping with automated migrations |
+| **ORM (TypeORM)** | Declarative entity mapping with automated schema synchronization (disabled in production) |
 | **DTO Validation** | class-validator decorators for type-safe input validation |
 | **Dependency Injection** | NestJS IoC container for modular, testable architecture |
-| **Infrastructure as Code** | render.yaml and docker-compose.yml define entire deployment |
+| **Infrastructure as Code** | render.yaml and docker-compose.yml define entire deployment topology |
 | **Multi-Cloud Distribution** | Services span Render, Hugging Face, Zilliz, and Cloudinary |
+| **Graceful Degradation** | Session management falls back from Redis to in-memory store transparently |
