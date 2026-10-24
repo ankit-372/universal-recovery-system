@@ -22,10 +22,9 @@ jobs:
           STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$TARGET_BACKEND" || echo "failed")
           echo "Backend response code: $STATUS_CODE"
 
-          if [ -n "$VISION_SERVICE_URL" ]; then
-            echo "Pinging Vision Service: $VISION_SERVICE_URL"
-            VISION_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$VISION_SERVICE_URL" || echo "failed")
-            echo "Vision service response code: $VISION_STATUS"
-          fi
+          TARGET_VISION="${VISION_SERVICE_URL:-https://ankit372-recoveryai.hf.space/docs}"
+          echo "Pinging Hugging Face Vision Service: $TARGET_VISION"
+          VISION_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$TARGET_VISION" || echo "failed")
+          echo "Vision service response code: $VISION_STATUS"
 
           echo "Ping complete!"
