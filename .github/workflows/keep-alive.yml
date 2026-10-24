@@ -17,7 +17,7 @@ jobs:
         run: |
           echo "Pinging services to prevent Render from sleeping..."
 
-          TARGET_BACKEND="${BACKEND_URL:-https://core-backend.onrender.com}"
+          TARGET_BACKEND="${BACKEND_URL:-https://core-backend-2xdu.onrender.com}"
           echo "Pinging Backend: $TARGET_BACKEND"
           STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$TARGET_BACKEND" || echo "failed")
           echo "Backend response code: $STATUS_CODE"
