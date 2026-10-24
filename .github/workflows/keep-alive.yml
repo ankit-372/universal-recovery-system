@@ -1,0 +1,31 @@
+name: Keep Render Services Awake
+
+on:
+  schedule:
+    # Runs every 14 minutes (Render free tier sleeps after 15 minutes)
+    - cron: '*/14 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI to test
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Services
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          VISION_SERVICE_URL: ${{ secrets.VISION_SERVICE_URL }}
+        run: |
+          echo "Pinging services to prevent Render from sleeping..."
+
+          TARGET_BACKEND="${BACKEND_URL:-https://core-backend.onrender.com}"
+          echo "Pinging Backend: $TARGET_BACKEND"
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$TARGET_BACKEND" || echo "failed")
+          echo "Backend response code: $STATUS_CODE"
+
+          if [ -n "$VISION_SERVICE_URL" ]; then
+            echo "Pinging Vision Service: $VISION_SERVICE_URL"
+            VISION_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$VISION_SERVICE_URL" || echo "failed")
+            echo "Vision service response code: $VISION_STATUS"
+          fi
+
+          echo "Ping complete!"
