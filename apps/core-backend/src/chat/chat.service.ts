@@ -24,13 +24,23 @@ export class ChatService {
 
         // Handle legacy format: chat_item_ITEMID_finder_FINDERID_seeker_SEEKERID
         if (conversationId.startsWith('chat_item_')) {
-            const parts = conversationId.split('_');
-            const finderId = parts[4];
-            const seekerId = parts[6];
+            const match = conversationId.match(/^chat_item_(.+?)_finder_(.+?)_seeker_(.+?)$/);
+            let itemId: string;
+            let finderId: string;
+            let seekerId: string;
+
+            if (match) {
+                [, itemId, finderId, seekerId] = match;
+            } else {
+                const parts = conversationId.split('_');
+                finderId = parts[4];
+                seekerId = parts[6];
+                itemId = parts[2];
+            }
+
             if (userId !== finderId && userId !== seekerId) {
                 throw new ForbiddenException('You are not a participant in this conversation');
             }
-            const itemId = parts[2];
             return this.startConversation(finderId, seekerId, itemId);
         }
 
@@ -56,13 +66,11 @@ export class ChatService {
 
     // 1. Start a new chat (When a match is found)
     async startConversation(finderId: string, receiverId: string, itemId: string) {
-        // Check if conversation already exists to avoid duplicates
-        // We check both directions because "A found B's item" is the same convo regardless of who starts it,
-        // although strictly speaking 'finder' and 'receiver' are roles.
-        // For now, we assume strict roles: Finder is the one who found it.
+        // Check if conversation already exists in either direction to avoid duplicates
         const existing = await this.conversationRepo.findOne({
             where: [
                 { finder: { id: finderId }, receiver: { id: receiverId }, itemId },
+                { finder: { id: receiverId }, receiver: { id: finderId }, itemId },
             ],
             relations: ['finder', 'receiver']
         });
@@ -71,7 +79,7 @@ export class ChatService {
         const finder = await this.userRepo.findOneBy({ id: finderId });
         const receiver = await this.userRepo.findOneBy({ id: receiverId });
 
-        if (!finder || !receiver) throw new Error("User not found");
+        if (!finder || !receiver) throw new NotFoundException("User not found");
 
         const conv = this.conversationRepo.create({
             finder,
@@ -113,14 +121,17 @@ export class ChatService {
 
         // Transform for frontend compatibility (mimicking the Controller logic I wrote earlier)
         return rawConversations.map(convo => {
-            const amIFinder = convo.finder.id === userId;
+            const amIFinder = convo.finder?.id === userId;
             const otherUser = amIFinder ? convo.receiver : convo.finder;
             const lastMessage = convo.messages?.length > 0
                 ? convo.messages[convo.messages.length - 1].content
                 : "No messages yet";
 
+            const finderId = convo.finder?.id || '';
+            const receiverId = convo.receiver?.id || '';
+
             return {
-                conversationId: `chat_item_${convo.itemId}_finder_${convo.finder.id}_seeker_${convo.receiver.id}`, // Legacy ID
+                conversationId: `chat_item_${convo.itemId}_finder_${finderId}_seeker_${receiverId}`, // Legacy ID
                 dbId: convo.id,
                 otherUserName: otherUser ? otherUser.fullName : "Unknown",
                 otherUserId: otherUser ? otherUser.id : null,

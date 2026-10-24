@@ -5,7 +5,7 @@ import API from '../lib/api';
 import { Send, Trash2 } from 'lucide-react';
 
 export function Inbox() {
-    const { socket, onlineUsers } = useSocket();
+    const { socket, onlineUsers, isConnected } = useSocket();
     const { user } = useAuth();
 
     const [conversations, setConversations] = useState<any[]>([]);
@@ -16,24 +16,40 @@ export function Inbox() {
 
     // 1. Load Conversation List
     useEffect(() => {
-        API.get('/chat/conversations').then(({ data }) => setConversations(data));
-    }, []);
+        if (!user) return;
+        API.get('/chat/conversations').then(({ data }) => setConversations(data)).catch(console.error);
+    }, [user]);
 
     // 2. Join Room & Load Messages when clicking a chat
     useEffect(() => {
         if (!socket || !activeConvo) return;
 
-        socket.emit('join_room', activeConvo);
-        socket.emit('get_messages', activeConvo, (msgs: any[]) => setMessages(msgs));
+        const joinAndLoad = () => {
+            socket.emit('join_room', activeConvo);
+            socket.emit('get_messages', activeConvo, (msgs: any[]) => {
+                if (Array.isArray(msgs)) setMessages(msgs);
+            });
+        };
+
+        if (socket.connected) {
+            joinAndLoad();
+        }
+        socket.on('connect', joinAndLoad);
 
         const handleMsg = (msg: any) => {
             // Only append if it belongs to this chat
             if (msg.conversationId === activeConvo) {
-                setMessages(prev => [...prev, msg]);
+                setMessages(prev => {
+                    if (prev.some(m => m.id === msg.id)) return prev;
+                    return [...prev, msg];
+                });
             }
+            // Refresh conversation list to show latest message preview
+            API.get('/chat/conversations').then(({ data }) => setConversations(data)).catch(() => {});
         };
 
         socket.on('receive_message', handleMsg);
+        socket.on('notification', handleMsg);
 
         // Listen for deletes
         const handleDelete = (payload: { messageId: string, conversationId: string }) => {
@@ -48,7 +64,9 @@ export function Inbox() {
         socket.on('message_deleted', handleDelete);
 
         return () => {
+            socket.off('connect', joinAndLoad);
             socket.off('receive_message', handleMsg);
+            socket.off('notification', handleMsg);
             socket.off('message_deleted', handleDelete);
         };
     }, [activeConvo, socket]);
@@ -59,10 +77,8 @@ export function Inbox() {
     const handleSend = () => {
         if (!newMessage.trim() || !socket || !activeConvo) return;
 
-        // Extract the "Other User ID" from the conversation string
-        // Format: chat_ITEMID_USERA_USERB
-        const parts = activeConvo.split('_');
-        const receiverId = parts[2] === user?.id ? parts[3] : parts[2]; // Simple logic
+        const currentConvo = conversations.find(c => c.conversationId === activeConvo);
+        const receiverId = currentConvo?.otherUserId;
 
         socket.emit('send_message', {
             conversationId: activeConvo,
@@ -78,8 +94,11 @@ export function Inbox() {
 
             {/* LEFT: Sidebar List */}
             <div className="w-1/3 border-r border-slate-100 bg-slate-50 flex flex-col">
-                <div className="p-4 border-b border-slate-200 bg-white shadow-sm z-10">
+                <div className="p-4 border-b border-slate-200 bg-white shadow-sm z-10 flex justify-between items-center">
                     <h2 className="font-bold text-xl text-slate-800">Messages</h2>
+                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${isConnected ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-amber-50 text-amber-600 border border-amber-200'}`}>
+                        {isConnected ? '● Connected' : '○ Connecting...'}
+                    </span>
                 </div>
                 <div className="flex-1 overflow-y-auto min-h-0">
                     {conversations.map((convo) => {

@@ -6,10 +6,12 @@ interface User {
     id: string;
     email: string;
     fullName: string;
+    token?: string;
 }
 
 interface AuthContextType {
     user: User | null;
+    token: string | null;
     isAuthenticated: boolean;
     isLoading: boolean;
     login: (email: string, password: string) => Promise<void>;
@@ -20,32 +22,56 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
+    const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'));
     const [isLoading, setIsLoading] = useState(true);
 
     // 1. Check Session on Mount
     useEffect(() => {
         checkAuth()
-            .then(({ data }) => setUser(data))
-            .catch(() => setUser(null))
+            .then(({ data }) => {
+                setUser(data);
+                if (data.token) {
+                    setToken(data.token);
+                    localStorage.setItem('auth_token', data.token);
+                }
+            })
+            .catch(() => {
+                setUser(null);
+                setToken(null);
+                localStorage.removeItem('auth_token');
+            })
             .finally(() => setIsLoading(false));
     }, []);
 
     // 2. Login Wrapper
     const login = async (email: string, pass: string) => {
-        await apiLogin(email, pass);
+        const { data: loginRes } = await apiLogin(email, pass);
+        if (loginRes.access_token) {
+            setToken(loginRes.access_token);
+            localStorage.setItem('auth_token', loginRes.access_token);
+        }
         const { data } = await checkAuth(); // Re-fetch user data
         setUser(data);
+        if (data.token) {
+            setToken(data.token);
+            localStorage.setItem('auth_token', data.token);
+        }
     };
 
     // 3. Logout Wrapper
     const logout = async () => {
-        await apiLogout();
-        setUser(null);
-        window.location.href = '/login';
+        try {
+            await apiLogout();
+        } finally {
+            setUser(null);
+            setToken(null);
+            localStorage.removeItem('auth_token');
+            window.location.href = '/login';
+        }
     };
 
     return (
-        <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, logout }}>
+        <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, isLoading, login, logout }}>
             {children}
         </AuthContext.Provider>
     );

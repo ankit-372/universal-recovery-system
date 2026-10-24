@@ -35,9 +35,10 @@ export class AuthController {
       maxAge: 3600 * 1000, // 1 hour expiration
     });
 
-    // 4. Return success message
+    // 4. Return success message and access_token (for WebSocket authentication)
     return {
       message: 'Login successful',
+      access_token,
       user: { id: user.id, email: user.email, name: user.fullName }
     };
   }
@@ -76,9 +77,19 @@ export class AuthController {
       throw new UnauthorizedException('User not found');
     }
 
-    // Return the user (without password)
+    // Extract token from cookie or Authorization header to support WebSocket authentication
+    const token =
+      req.cookies?.['jwt'] ||
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.split(' ')[1]
+        : null);
+
+    // Return the user (without password) and token
     const { passwordHash, ...result } = user;
-    return result;
+    return {
+      ...result,
+      token,
+    };
   }
 
   // 🛡️ Rate limit: Max 3 requests per minute to prevent email spamming/enumeration

@@ -5,6 +5,7 @@ import { Bell } from 'lucide-react';
 
 interface SocketContextType {
     socket: Socket | null;
+    isConnected: boolean;
     onlineUsers: Set<string>;
     notifications: any[];
 }
@@ -12,23 +13,53 @@ interface SocketContextType {
 const SocketContext = createContext<SocketContextType | null>(null);
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-    const { user } = useAuth();
+    const { user, token } = useAuth();
     const [socket, setSocket] = useState<Socket | null>(null);
+    const [isConnected, setIsConnected] = useState(false);
     const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
     const [notifications, setNotifications] = useState<any[]>([]);
 
     useEffect(() => {
-        if (!user) return;
+        if (!user) {
+            if (socket) {
+                socket.close();
+                setSocket(null);
+                setIsConnected(false);
+            }
+            return;
+        }
 
         const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
         const baseURL = apiUrl.startsWith('http') ? apiUrl : `https://${apiUrl}`;
+        const activeToken = token || localStorage.getItem('auth_token') || '';
 
-        // Connect with userId so server knows who we are
+        // Connect with authenticated JWT credentials and userId fallback
         const newSocket = io(baseURL, {
-            query: { userId: user.id },
+            withCredentials: true,
+            auth: {
+                token: activeToken,
+            },
+            query: {
+                userId: user.id,
+                token: activeToken,
+            },
+            transports: ['websocket', 'polling'],
         });
 
-        setSocket(newSocket);
+        newSocket.on('connect', () => {
+            console.log("🟢 WebSocket connected successfully:", newSocket.id);
+            setIsConnected(true);
+        });
+
+        newSocket.on('disconnect', (reason) => {
+            console.log("🔴 WebSocket disconnected:", reason);
+            setIsConnected(false);
+        });
+
+        newSocket.on('connect_error', (err) => {
+            console.warn("⚠️ WebSocket connection error:", err.message);
+            setIsConnected(false);
+        });
 
         // Track Online Status
         newSocket.on('user_status', ({ userId, status }) => {
@@ -47,12 +78,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         // Listen for Notifications
         newSocket.on('notification', (notif) => {
             setNotifications((prev) => [...prev, notif]);
-            // Play a sound or show browser notification here
             new Audio('/notification.mp3').play().catch(() => { });
         });
 
-        return () => { newSocket.close(); };
-    }, [user]);
+        setSocket(newSocket);
+
+        return () => {
+            newSocket.close();
+            setIsConnected(false);
+        };
+    }, [user, token]);
 
     return (
         <SocketContext.Provider value={{ socket, onlineUsers, notifications }}>

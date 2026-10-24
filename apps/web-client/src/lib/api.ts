@@ -15,6 +15,15 @@ const API = axios.create({
   withCredentials: true, // 🍪 CRITICAL: Allows browser to send/receive HttpOnly cookies automatically
 });
 
+// Attach Bearer token as fallback for cross-site environments where cookies are blocked
+API.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token');
+  if (token && !config.headers.Authorization) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export const login = (email: string, password: string) =>
   API.post('/auth/login', { email, password });
 

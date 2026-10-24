@@ -10,7 +10,7 @@ interface ChatProps {
 }
 
 export function ChatWindow({ itemId, finderId, currentUserId, onClose }: ChatProps) {
-  const { socket } = useSocket(); // ✅ Reuse connection
+  const { socket, isConnected } = useSocket(); // ✅ Reuse connection
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -23,22 +23,34 @@ export function ChatWindow({ itemId, finderId, currentUserId, onClose }: ChatPro
   useEffect(() => {
     if (!socket) return;
 
-    console.log("🔌 Joining Room:", conversationId);
+    const joinAndLoad = () => {
+      console.log("🔌 Joining Room:", conversationId);
+      // 1. Join the unique room
+      socket.emit('join_room', conversationId);
 
-    // 1. Join the unique room
-    socket.emit('join_room', conversationId);
+      // 2. Load History
+      socket.emit('get_messages', conversationId, (history: any[]) => {
+        console.log("📜 History Loaded:", history?.length);
+        if (Array.isArray(history)) {
+          setMessages(history);
+        }
+      });
+    };
 
-    // 2. Load History
-    socket.emit('get_messages', conversationId, (history: any[]) => {
-      console.log("📜 History Loaded:", history.length);
-      setMessages(history);
-    });
+    if (socket.connected) {
+      joinAndLoad();
+    }
+    socket.on('connect', joinAndLoad);
 
     // 3. Listen for real-time messages
     const handleMessage = (msg: any) => {
       // Only add if it belongs to THIS room
       if (msg.conversationId === conversationId) {
-        setMessages((prev) => [...prev, msg]);
+        setMessages((prev) => {
+          // Avoid duplicate local rendering
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
       }
     };
 
@@ -56,8 +68,8 @@ export function ChatWindow({ itemId, finderId, currentUserId, onClose }: ChatPro
     };
     socket.on('message_deleted', handleDelete);
 
-    // Cleanup: Leave room logic (optional) or just remove listener
     return () => {
+      socket.off('connect', joinAndLoad);
       socket.off('receive_message', handleMessage);
       socket.off('message_deleted', handleDelete);
     };
@@ -88,8 +100,16 @@ export function ChatWindow({ itemId, finderId, currentUserId, onClose }: ChatPro
         <div className="flex items-center gap-2">
           <MessageSquare className="w-5 h-5" />
           <div className="flex flex-col">
-            <span className="font-bold text-sm">Chat with Finder</span>
-            <span className="text-[10px] opacity-75">ID: {conversationId.slice(-6)}</span>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-sm">Chat with Finder</span>
+              <span
+                className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`}
+                title={isConnected ? 'Connected' : 'Connecting to chat...'}
+              />
+            </div>
+            <span className="text-[10px] opacity-75">
+              {isConnected ? `ID: ${conversationId.slice(-6)}` : 'Connecting...'}
+            </span>
           </div>
         </div>
         <button onClick={onClose} className="hover:bg-indigo-500 p-1 rounded-full transition">

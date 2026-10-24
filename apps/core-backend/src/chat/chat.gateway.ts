@@ -18,7 +18,9 @@ import { createWsJwtMiddleware } from './ws-jwt.middleware';
 
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:5173', /^https:\/\/.*\.onrender\.com$/],
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      callback(null, true);
+    },
     credentials: true,
   },
 })
@@ -88,8 +90,11 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     try {
       // 🔒 Authorization check: Ensure client is a participant in this conversation before joining
-      await this.chatService.verifyMembership(roomId, userId);
+      const conv = await this.chatService.verifyMembership(roomId, userId);
       client.join(roomId);
+      if (conv && conv.id && conv.id !== roomId) {
+        client.join(conv.id);
+      }
     } catch (err: any) {
       client.emit('error', { message: err.message || 'Cannot join room: Forbidden' });
     }
@@ -132,11 +137,17 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       payload.content,
     );
 
-    // 3. Emit back to the Room
+    // 3. Emit back to the Room (both legacy string and db UUID)
     this.server.to(payload.conversationId).emit('receive_message', {
       ...savedMessage,
       conversationId: payload.conversationId,
     });
+    if (conversationId && conversationId !== payload.conversationId) {
+      this.server.to(conversationId).emit('receive_message', {
+        ...savedMessage,
+        conversationId: payload.conversationId,
+      });
+    }
 
     // 4. Notification
     const receiverSocketId = this.activeUsers.get(payload.receiverId);

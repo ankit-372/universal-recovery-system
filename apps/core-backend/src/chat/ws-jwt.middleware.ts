@@ -50,9 +50,15 @@ export function createWsJwtMiddleware(
 
       // If session service is provided, check if the session is still active
       if (sessionService && payload.sid) {
-        const isValid = await sessionService.validateSession(payload.sub, payload.sid);
-        if (!isValid) {
-          return next(new Error('Session has expired or was revoked'));
+        try {
+          const isValid = await sessionService.validateSession(payload.sub, payload.sid);
+          if (!isValid) {
+            console.warn(`⚠️ [WS-JWT] Session invalid or expired for user ${payload.sub}`);
+            return next(new Error('Session has expired or was revoked'));
+          }
+        } catch (sessionErr: any) {
+          console.warn(`⚠️ [WS-JWT] Session store error during validation: ${sessionErr.message}`);
+          // Proceed if token is cryptographically valid and session store had a transient error
         }
       }
 
@@ -65,6 +71,7 @@ export function createWsJwtMiddleware(
 
       next();
     } catch (err: any) {
+      console.warn(`⚠️ [WS-JWT] Handshake auth error: ${err.message}`);
       next(new Error(`Authentication failed: ${err.message || 'Invalid token'}`));
     }
   };
